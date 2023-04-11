@@ -1,0 +1,2670 @@
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using OpenQA.Selenium;
+using OpenQA.Selenium.Chrome;
+using System.Threading;
+using Google.Apis.Sheets.v4;
+using Google.Apis.Auth.OAuth2;
+using Google.Apis.Util.Store;
+using Google.Apis.Sheets.v4.Data;
+using System.Text;
+using System.Diagnostics;
+using System.Net;
+using System.Data;
+using System.Management;
+using Microsoft.Win32;
+using Color = System.Drawing.Color;
+using NAudio.Wave;
+using System.Reflection;
+using Newtonsoft.Json.Linq;
+using SeleniumUndetectedChromeDriver;
+using MailKit.Net.Imap;
+using MailKit;
+using MailKit.Search;
+
+using OpenQA.Selenium.Interactions;
+using System.Xml;
+using System.Collections.ObjectModel;
+using System.Runtime.Serialization.Formatters.Binary;
+
+namespace 外送自動註冊
+{
+    public partial class Form1 : Form
+    {
+        private Form4 form4;
+        private Form3 form3;
+        public Form1()
+        {
+            InitializeComponent();
+            form4 = new Form4();
+            form3 = new Form3();
+        }
+        [DllImport("Shlwapi.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public extern static bool PathFileExists(string path);
+
+        public static bool is_Chrome() //判斷是否有安裝google chrome瀏覽器
+        {
+            try
+            {
+                string app = "chrome.exe";
+                RegistryKey regKey = Registry.LocalMachine;
+                RegistryKey regSubKey = regKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" + app, false);
+                string strKey = string.Empty;
+                object objResult = regSubKey.GetValue(strKey);
+                RegistryValueKind regValueKind = regSubKey.GetValueKind(strKey);
+                return true;
+
+            }
+            catch
+            {
+                MessageBox.Show("請檢查是否安裝Google瀏覽器！請重新下載安裝Google瀏覽器，不要使用免安裝攜帶版本的", "提示");
+                return false;
+            }
+        }
+        private async void Form1_Load(object sender, EventArgs e)
+        {
+            try
+            {
+                is_Chrome();
+
+                Form.CheckForIllegalCrossThreadCalls = false;
+                dataGridView2.ClearSelection();
+
+                string filePath = "UserSettings.xml";
+                if (File.Exists(filePath))
+                {
+                    List<ComboBox> comboBoxesToSave = new List<ComboBox> { 預設暱稱Combobox, 預設地址Combobox, 預設備註Combobox, 預設網址Combobox };
+                    List<CheckBox> checkBoxesToSave = new List<CheckBox> { 改成後台運行, 放門口改備註Checkbox, 最上層Checkbox, form4.使用自定義Gmail信箱Checkbox };
+                    讀取用戶設置從XML(comboBoxesToSave, checkBoxesToSave, form4.richTextBox2, dataGridView2, filePath);
+                }
+
+
+                DirectoryInfo root = new DirectoryInfo(Path.Combine(Environment.CurrentDirectory));
+                foreach (var i in root.GetDirectories())//取得所有路徑資料夾，並只顯示UberCookie資料夾
+                {
+                    if (i.FullName.Contains("UberEats已經登入帳號的Cookie"))
+                    {
+
+                        if (dataGridView2.Rows.Count <= 0)
+                        {
+                            dataGridView2.Rows.Add(1);
+                        }
+                        for (int k = 0; k < dataGridView2.Rows.Count; k++)
+                        {
+                            if (dataGridView2.Rows[k].Cells["餅乾路徑"].Value != null && dataGridView2.Rows[k].Cells["餅乾路徑"].Value.ToString() == i.FullName)
+                            {
+                                break;
+                            }
+                            if (k == dataGridView2.Rows.Count - 1)
+                            {
+                                if (dataGridView2.Rows[0].Cells["路徑縮名"].Value != null)
+                                {
+                                    dataGridView2.Rows.Add(1);
+                                }
+                                await Task.Delay(50);
+                                dataGridView2.Rows[dataGridView2.Rows.Count - 1].Cells["路徑縮名"].Value = i;
+                                dataGridView2.Rows[dataGridView2.Rows.Count - 1].Cells["餅乾路徑"].Value = i.FullName;
+                            }
+                        }
+                    }
+                }
+
+                if (最上層Checkbox.Checked)
+                {
+                    this.TopMost = true; // 程式最上層
+                }
+                else
+                {
+                    this.TopMost = false; // 取消最上層
+                }
+                timer1.Start();
+            }
+            catch
+            { }
+        }
+
+        private HashSet<string> existingCookies = new HashSet<string>();
+        private HashSet<string> newCookies = new HashSet<string>();
+        //private void 執行緒定時循環檢測(object state, bool timedout)
+        private void 執行緒定時循環檢測()
+        {
+            try
+            {
+                var query = new SelectQuery("SELECT CommandLine FROM Win32_Process WHERE Name='chrome.exe' and CommandLine like '%remote-debugging-port=%' and not CommandLine like '%type=renderer%'");
+                var searcher = new ManagementObjectSearcher(query);
+                var commandLines = searcher.Get().Cast<ManagementObject>().Select(p => p["CommandLine"].ToString()).ToList();
+                foreach (var item in commandLines)
+                {
+                    var userDataDirMatch = Regex.Match(item, @"--user-data-dir=(.+?)(\s|$)");
+                    var portMatch = Regex.Match(item, @"--remote-debugging-port=(\d+)");
+                    if (userDataDirMatch.Success)
+                    {
+                        //MessageBox.Show(item);
+                        var userDataDir = userDataDirMatch.Groups[1].Value;
+                        var port = int.Parse(portMatch.Groups[1].Value);
+                        newCookies.Add(userDataDir);
+                        dataGridView2.Rows.Cast<DataGridViewRow>().Where(row => row.Cells["餅乾路徑"].Value?.ToString() == userDataDir).ToList().ForEach(row =>
+                        {
+                            row.Cells["Port"].Value = port.ToString();
+                            row.DefaultCellStyle.BackColor = System.Drawing.Color.Green;
+                        });
+                    }
+                }
+
+                existingCookies.ExceptWith(newCookies);
+                newCookies.ExceptWith(existingCookies);
+
+                foreach (var i in existingCookies)
+                {
+                    dataGridView2.Rows.Cast<DataGridViewRow>().Where(row => row.Cells["餅乾路徑"].Value?.ToString() == i).ToList().ForEach(row =>
+                    {
+                        row.Cells["Port"].Value = "";
+                        row.DefaultCellStyle.BackColor = System.Drawing.Color.White;
+                    });
+                }
+                existingCookies.UnionWith(newCookies);
+                newCookies.Clear();
+
+
+                //if (form3.checkBox1.Checked)
+                //{
+
+                //for (int i = 0; i < dataGridView2.Rows.Count; i++)
+                //{
+                //    if (dataGridView2.Rows[i].DefaultCellStyle.BackColor != Color.Green)
+                //    {
+                //        continue;
+                //    }
+                //    else if (dataGridView2.Rows[i].Cells["Port"].Value != null)
+                //    {
+                //UndetectedChromeDriver ChromeGoGo = 保存瀏覽器物件繼續調用字典[dataGridView2.Rows[i].Cells["餅乾路徑"].Value.ToString()].Item2;
+                //if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"location-typeahead-home-item-0\"]")).Count > 0)
+                //{
+                //    MessageBox.Show(ChromeGoGo.FindElements(By.XPath("//*[@id=\"location-typeahead-home-item-0\"]"))[0].Text);
+                //}
+
+                //    try
+                //    {
+                //        //var driverExecutablePath = new ChromeDriverInstaller().Auto().Result;
+                //        ////service.HideCommandPromptWindow = true;
+
+                //        //var driverPath = $@"C:\Users\Administrator\AppData\Roaming\UndetectedChromeDriver\chromedriver_110.0.5481.exe"; //使用自動更新內的chromedriver而非自動生成的
+                //        //var service = ChromeDriverService.CreateDefaultService(driverPath);
+
+                //        //var options = new ChromeOptions();
+                //        //options.DebuggerAddress = $"localhost:{dataGridView2.Rows[i].Cells["Port"].Value}";
+
+                //        //var ChromeGoGo = new ChromeDriver(service, options);
+                //        //ChromeGoGo.Navigate().GoToUrl("https://www.example.com");
+
+
+                //        ChromeOptions options = new ChromeOptions();
+                //        //options.DebuggerAddress = $"127.0.0.1:9222";
+                //        options.DebuggerAddress = $"localhost:{dataGridView2.Rows[i].Cells["Port"].Value}";
+                //        //options.AddArgument($"--remote-debugging-port={Port}");//讓程式關閉後重新啟動可以繼續調用
+                //        MessageBox.Show("1");
+
+                //        UndetectedChromeDriver ChromeGoGo = UndetectedChromeDriver.Create(
+                //driverExecutablePath: new ChromeDriverInstaller().Auto().Result,
+                //hideCommandPromptWindow: true,
+                //options: options
+                //                );
+                //        ChromeGoGo.Navigate().GoToUrl("https://www.yahoo.com.tw");
+                //        MessageBox.Show("3");
+                //    }
+                //    catch (Exception e)
+                //    {
+
+                //        MessageBox.Show(e.Message);
+                //    }
+                //    }
+                //}
+
+                //    //            //        ChromeOptions options = new ChromeOptions();
+                //    //            //        MessageBox.Show("2");
+
+                //    //            //        options.DebuggerAddress = $"localhost:{dataGridView2.Rows[i].Cells["Port"].Value}";
+                //    //            //        MessageBox.Show("1");
+
+                //    //            //        UndetectedChromeDriver ChromeGoGo = UndetectedChromeDriver.Create(
+                //    //            //driverExecutablePath: new ChromeDriverInstaller().Auto().Result,
+                //    //            //hideCommandPromptWindow: true,
+                //    //            //options: options
+                //    //            //);
+                //    //            //        MessageBox.Show("3");
+
+
+                //    //            //        ChromeGoGo.Navigate().GoToUrl("https://www.yahoo.com.tw");
+
+
+                //    //            //        var ChromeGoGo = UndetectedChromeDriver.Create(
+                //    //            //driverExecutablePath: new ChromeDriverInstaller().Auto().Result,
+                //    //            //hideCommandPromptWindow: true,
+                //    //            //options: options
+                //    //            //);
+                //    //            //        ChromeGoGo.Navigate().GoToUrl("https://www.example.com");
+
+                //    //            //service.EnableVerboseLogging = false;
+                //    //            //service.SuppressInitialDiagnosticInformation = true;
+                //    //            //service.HideCommandPromptWindow = true;
+                //    //            //ChromeGoGo = new ChromeDriver(service, options);
+
+                //    //            //ChromeGoGo.Navigate().GoToUrl(comboBox1.Text);
+
+
+                //    //            //service.EnableVerboseLogging = false;
+                //    //            //service.SuppressInitialDiagnosticInformation = true;
+                //    //            //service.HideCommandPromptWindow = true;
+                //    //            //options執行緒定時循環檢測.DebuggerAddress = $"localhost:{dataGridView2.Rows[i].Cells["Port"].Value}";
+
+                //    //            //ChromeGoGo.Navigate().GoToUrl("https://www.yahoo.com.tw");
+                //    //            //Serializer.SerializeToJson(ChromeGoGo, "ChromeGoGo.json");
+                //    //            try
+                //    //            {
+                //    //                //string targetUrl = "https://www.ubereats.com/tw/orders";
+                //    //                //string 預估抵達時間String = null;
+                //    //                //foreach (string handle in ChromeGoGo.WindowHandles)
+                //    //                //{
+                //    //                //    //ChromeGoGo.SwitchTo().Window(handle);
+                //    //                //    //if (ChromeGoGo.Url.StartsWith(targetUrl))
+                //    //                //    //{
+                //    //                //    //    //預估抵達時間String = ChromeGoGo.FindElement(By.XPath("//*[@id=\"main-content\"]/div[1]/div[1]/div[2]/div[1]/div/div[3]")).Text;
+                //    //                //    //    //預估抵達時間String = ChromeGoGo.FindElement(By.XPath("//*[@id=\"main-content\"]/div[12]/div/div/div[1]/span")).Text;
+                //    //                //    //    break; // 找到第一個符合條件的分頁就跳出循環
+                //    //                //    //}
+                //    //                //}
+
+                //    //                //// 獲取當前瀏覽器視窗的唯一識別碼
+                //    //                //string mainWindowHandle = ChromeGoGo.CurrentWindowHandle;
+
+                //    //                //// 創建一個空列表來存儲所有瀏覽器視窗的 URL
+                //    //                //List<string> urls = new List<string>();
+
+                //    //                //// 迭代所有瀏覽器視窗的唯一識別碼
+                //    //                //foreach (string windowHandle in ChromeGoGo.WindowHandles)
+                //    //                //{
+                //    //                //    // 切換到目標瀏覽器視窗
+                //    //                //    ChromeGoGo.SwitchTo().Window(windowHandle);
+
+                //    //                //    // 獲取當前瀏覽器視窗的 URL
+                //    //                //    string currentUrl = ChromeGoGo.Url;
+
+                //    //                //    // 將 URL 添加到列表中
+                //    //                //    urls.Add(currentUrl);
+                //    //                //}
+
+                //    //                //// 切換回原始瀏覽器視窗
+                //    //                //ChromeGoGo.SwitchTo().Window(mainWindowHandle);
+
+                //    //                //// 打印所有瀏覽器視窗的 URL
+                //    //                //foreach (string url in urls)
+                //    //                //{
+                //    //                //    MessageBox.Show(url);
+                //    //                //}
+
+
+
+
+
+
+                //    //                //// 输出获取到的文本
+                //    //                //Console.WriteLine(text);
+                //    //                //form3.richTextBox1.Text = 預估抵達時間String;
+                //    //                //MessageBox.Show(預估抵達時間String);
+
+                //    //                //string pattern = @"(預估抵達時間|即將抵達) (\d{1,2}:\d{2})";
+                //    //                //// 执行正则表达式匹配
+                //    //                //Match match = Regex.Match(預估抵達時間String, pattern);
+
+                //    //                //// 检查是否匹配成功
+                //    //                //if (match.Success)
+                //    //                //{
+                //    //                //    string type = match.Groups[1].Value;
+                //    //                //    if (type.Contains("即將抵達") || type.Contains("即將送達"))
+                //    //                //    {
+                //    //                //        MessageBox.Show("即將到達");
+                //    //                //        PlayMp3();//播放自定義音檔
+                //    //                //    }
+                //    //                //    else if (type.Contains("預估抵達時間"))
+                //    //                //    {
+                //    //                //        string timeString = match.Groups[2].Value;
+                //    //                //        DateTime now = DateTime.Now;
+                //    //                //        string nowString = now.ToString("tt", CultureInfo.InvariantCulture);
+                //    //                //        DateTime etaTime;
+                //    //                //        if (nowString == "AM")
+                //    //                //        {
+                //    //                //            etaTime = DateTime.ParseExact(timeString + " AM", "h:mm tt", CultureInfo.InvariantCulture);
+                //    //                //        }
+                //    //                //        else
+                //    //                //        {
+                //    //                //            etaTime = DateTime.ParseExact(timeString + " PM", "h:mm tt", CultureInfo.InvariantCulture);
+                //    //                //        }
+                //    //                //        TimeSpan timeDifference = etaTime - now;
+                //    //                //        form3.richTextBox1.Text = $"預估抵達時間：{etaTime}\n現在時間：{now}\n指定提醒時間：{timeDifference}\n";
+                //    //                //        int minutes = 3;
+                //    //                //        if (int.TryParse(form3.textBox2.Text, out minutes) && timeDifference.TotalMinutes >= 0 && timeDifference.TotalMinutes <= minutes)
+                //    //                //        {
+                //    //                //            PlayMp3();//播放自定義音檔
+                //    //                //        }
+                //    //                //        //MessageBox.Show(now + "\n" + etaTime + "\n" + timeDifference+"\n"+ minutes);
+                //    //                //    }
+                //    //                //}
+                //    //            }
+                //    //            catch (NoSuchElementException)
+                //    //            {
+                //    //            }
+                //    //        }
+                //    //    }
+                //    //}
+                //}
+            }
+            catch (Exception)
+            {
+            }
+        }
+        private void 創建開啟一個新瀏覽器_Click(object sender, EventArgs e)
+        {
+            this.BeginInvoke((Action)delegate ()
+            {
+                創建開啟一個新瀏覽器.Enabled = false;
+                創建開啟一個新瀏覽器並且自動註冊.Enabled = false;
+                ThreadPool.QueueUserWorkItem(new WaitCallback(WorkerThread), "null");
+            });
+        }
+        private void 創建開啟一個新瀏覽器並且自動註冊_Click(object sender, EventArgs e)
+        {
+            this.BeginInvoke((Action)delegate ()
+             {
+                 創建開啟一個新瀏覽器.Enabled = false;
+                 創建開啟一個新瀏覽器並且自動註冊.Enabled = false;
+                 ThreadPool.QueueUserWorkItem(new WaitCallback(WorkerThread), "自動註冊");
+             });
+        }
+        Dictionary<string, (string, UndetectedChromeDriver, SheetsService, string)> 保存瀏覽器物件繼續調用字典 = new Dictionary<string, (string, UndetectedChromeDriver, SheetsService, string)>();
+        private object _lockObject = new object();
+        private object _lockObject1 = new object();
+        private object _lockObject2 = new object();
+        private object _lockObject3 = new object();
+        private object _lockObject4 = new object();
+        public void WorkerThread(object 瀏覽器Cookie路徑)//每按下一次Button就開一個，執行緒多開分別控制每個Selenium瀏覽器
+        {
+            try
+            {
+                string 選擇哪個路徑 = null;
+                ChromeOptions options = new ChromeOptions();
+
+                int 路徑添加個數數量 = 0;
+                string 當前Cookie路徑資料夾 = Path.Combine(Environment.CurrentDirectory) + "\\UberEats已經登入帳號的Cookie";
+                string 當前Cookie路徑資料夾1 = 當前Cookie路徑資料夾;
+                if (瀏覽器Cookie路徑.ToString() == "null" || 瀏覽器Cookie路徑.ToString() == "自動註冊")//如果創建一個新的瀏覽器的話
+                {
+                    while (!是否中斷所有while)
+                    {
+                        if (System.IO.Directory.Exists(當前Cookie路徑資料夾1))
+                        {
+                            當前Cookie路徑資料夾1 = 當前Cookie路徑資料夾;
+                            當前Cookie路徑資料夾1 += 路徑添加個數數量;
+                            路徑添加個數數量++;
+                        }
+                        else
+                        {
+                            dataGridView2.Rows.Add();
+                            dataGridView2.Rows[dataGridView2.Rows.Count - 1].Cells["路徑縮名"].Value = 當前Cookie路徑資料夾1.Split(Path.DirectorySeparatorChar)[當前Cookie路徑資料夾1.Split(Path.DirectorySeparatorChar).Length - 1];
+                            dataGridView2.Rows[dataGridView2.Rows.Count - 1].Cells["餅乾路徑"].Value = 當前Cookie路徑資料夾1;
+                            選擇哪個路徑 = 當前Cookie路徑資料夾1;
+                            break;
+                        }
+                    }
+                }
+                else//如果直接點啟動現有瀏覽器的話
+                {
+                    選擇哪個路徑 = 瀏覽器Cookie路徑.ToString();
+                }
+
+                SheetsService sheetsService;
+                IList<IList<object>> UserAgent全域List陣列;
+                Random UserAgent亂數 = new Random();//亂數種子
+                lock (_lockObject)
+                {
+                    sheetsService = InitializeSheetsService();
+                    UserAgent全域List陣列 = GetSheetData(sheetsService, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE");//從Google Sheet取得所有UserAgent
+                }
+                var 使用哪個UserAgent保存 = "";
+                if (!File.Exists(選擇哪個路徑 + "\\UberEats保存已使用的UserAgent.txt"))
+                {
+                    int 隨機UserAgent的int = UserAgent亂數.Next(0, UserAgent全域List陣列.Count);
+                    if (!Directory.Exists(選擇哪個路徑))//創建資料夾
+                    {
+                        Directory.CreateDirectory(選擇哪個路徑);
+                    }
+                    if (!File.Exists(選擇哪個路徑 + "\\UberEats保存已使用的UserAgent.txt"))//創建txt
+                    {
+                        File.Create(選擇哪個路徑 + "\\UberEats保存已使用的UserAgent.txt").Close();
+                    }
+                    StreamWriter sw = new StreamWriter(選擇哪個路徑 + "\\UberEats保存已使用的UserAgent.txt", false, Encoding.Default);//寫入隨機useragent
+                    sw.WriteLine(UserAgent全域List陣列[隨機UserAgent的int][0]);
+                    sw.Close();
+                    使用哪個UserAgent保存 = UserAgent全域List陣列[隨機UserAgent的int][0].ToString();
+                    options.AddArgument($"--user-agent={UserAgent全域List陣列[隨機UserAgent的int][0]}");//隨機修改UserAgent
+                    DeleteSheetData(sheetsService, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE", UserAgent全域List陣列, UserAgent全域List陣列[隨機UserAgent的int][0].ToString());
+                }
+                else
+                {
+                    using (StreamReader reader = new StreamReader(選擇哪個路徑 + "\\UberEats保存已使用的UserAgent.txt"))//找到已用過的useragent就固定使用，讀取txt內的useragent
+                    {
+                        使用哪個UserAgent保存 = reader.ReadToEnd();
+                        options.AddArgument($"--user-agent={使用哪個UserAgent保存}");
+                    }
+                }
+                //options.AddArgument($"--user-agent={"Mozilla/5.0 (Windows NT 12.3; Win64; x64) AppleWebKit/537.50 (KHTML, like Gecko) Chrome/110.12.4.2 Safari/537.50"}");//隨機修改UserAgent
+                lock (_lockObject1)
+                {
+                    創建開啟一個新瀏覽器.Enabled = true;
+                    創建開啟一個新瀏覽器並且自動註冊.Enabled = true;
+                    int Port = 9222;
+                    while (!是否中斷所有while)
+                    {
+                        var query = new SelectQuery($"SELECT CommandLine FROM Win32_Process WHERE Name='chrome.exe' and CommandLine like '%remote-debugging-port={Port}%'");
+                        var searcher = new ManagementObjectSearcher(query);
+                        if (searcher.Get().Count == 0)
+                        {
+                            break;
+                        }
+                        Port++;
+                    }
+                    options.AddArgument($"--remote-debugging-port={Port}");//讓程式關閉後重新啟動可以繼續調用
+
+                    自動生成Json和Js檔案Google擴充路徑();
+                    string extensionFolderPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\ChromedriverFinger\";
+                    options.AddArguments("--load-extension=" + extensionFolderPath);
+                }
+                //// Disable WebRTC.
+                //var prefs = new Dictionary<string, object>
+                //{
+                //    ["webrtc.ip_handling_policy"] = "disable_non_proxied_udp",
+                //    ["webrtc.multiple_routes_enabled"] = false,
+                //    ["webrtc.nonproxied_udp_enabled"] = false
+                //};
+
+                options.AddAdditionalOption("webrtc.ip_handling_policy", "disable_non_proxied_udp");
+                options.AddAdditionalOption("webrtc.multiple_routes_enabled", false);
+                options.AddAdditionalOption("webrtc.nonproxied_udp_enabled", false);
+                options.AddArguments(
+        "--lang=tw",
+        "--disable-gpu",
+        "--autoplay-policy=user-gesture-required",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-breakpad",
+        "--disable-client-side-phishing-detection",
+        "--disable-component-update",
+        "--disable-dev-shm-usage",
+        "--disable-domain-reliability",
+        "--disable-features=AudioServiceOutOfProcess",
+        "--disable-hang-monitor",
+        "--disable-ipc-flooding-protection",
+        "--disable-desktop-notifications",  //;//禁用桌面通知，在Windows中桌面通知默認是啟用的。
+        "--disable-notifications",
+        "--disable-offer-store-unmasked-wallet-cards",
+        "--disable-popup-blocking",
+        "--disable-print-preview",
+        "--disable-prompt-on-repost",
+        "--disable-renderer-backgrounding",
+        "--disable-setuid-sandbox",
+        "--disable-speech-api",
+        "--disk-cache-size=33554432",
+        "--hide-scrollbars",
+        "--ignore-gpu-blacklist",
+        "--ignore-certificate-errors",
+        "--metrics-recording-only",
+        "--mute-audio",
+        "--no-default-browser-check",
+        "--no-first-run",
+        "--no-pings",
+        "--no-sandbox",
+        "--no-zygote",
+        "--password-store=basic",
+        "--use-gl=swiftshader",
+        "--use-mock-keychain",
+        "--single-process");
+
+                if (瀏覽器Cookie路徑.ToString() == "自動註冊" && 改成後台運行.Checked)
+                {
+                    options.AddArgument("--headless=new");
+                }
+
+                var ChromeGoGo = UndetectedChromeDriver.Create(
+                //prefs: prefs,
+                driverExecutablePath: new ChromeDriverInstaller().Auto().Result,
+                hideCommandPromptWindow: true,
+                options: options,
+userDataDir: 選擇哪個路徑
+                );
+                //讀取ChromeCookie(ChromeGoGo, 選擇哪個路徑 + "\\Cookies.dat");
+                //ChromeGoGo.Navigate().GoToUrl("https://pixelscan.net/");
+                //driver.Manage().Timeouts().ImplicitWait = TimeSpan.FromSeconds(10000000000);
+                ChromeGoGo.Navigate().GoToUrl(預設網址Combobox.Text);
+                //ChromeGoGo.Navigate().GoToUrl("https://@gmail.com");
+                //string 帳號 = "jianhuajian3";
+                //string 密碼 = "JJjianhuajian3JJ";
+                //bool 帳號已經輸入 = false;
+                //bool 密碼已經輸入 = false;
+                //bool 搜尋信件已經輸入 = false;
+                //while (true)
+                //{
+                //    try
+                //    {
+                //        if (!帳號已經輸入 && ChromeGoGo.FindElements(By.XPath("//*[@id=\"identifierId\"]")).Count > 0)
+                //        {
+                //            IWebElement element = ChromeGoGo.FindElement(By.XPath("//*[@id=\"identifierId\"]"));
+                //            element.SendKeys(帳號);
+                //            帳號已經輸入 = true;
+                //        }
+                //    }
+                //    catch
+                //    { }
+
+                //    try
+                //    {
+                //        if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"identifierNext\"]/div/button/span")).Count > 0)
+                //        {
+                //            IWebElement element = ChromeGoGo.FindElement(By.XPath("//*[@id=\"identifierNext\"]/div/button/span"));
+                //            element.Click();
+                //        }
+                //    }
+                //    catch
+                //    { }
+
+                //    try
+                //    {
+                //        if (!密碼已經輸入 && ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div[1]/div[2]/div/c-wiz/div/div[2]/div/div[1]/div/form/span/section[2]/div/div/div[1]/div[1]/div/div/div/div/div[1]/div/div[1]/input")).Count > 0)
+                //        {
+                //            IWebElement element = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div[1]/div[2]/div/c-wiz/div/div[2]/div/div[1]/div/form/span/section[2]/div/div/div[1]/div[1]/div/div/div/div/div[1]/div/div[1]/input")); //信箱完繼續按鈕
+                //            element.SendKeys(密碼);
+                //            密碼已經輸入 = true;
+                //        }
+                //    }
+                //    catch
+                //    { }
+
+                //    try
+                //    {
+                //        if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div[1]/div[2]/div/c-wiz/div/div[2]/div/div[2]/div/div[1]/div/div/button/span")).Count > 0)
+                //        {
+                //            IWebElement element = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div[1]/div[2]/div/c-wiz/div/div[2]/div/div[2]/div/div[1]/div/div/button/span")); //信箱完繼續按鈕
+                //            element.Click();
+                //        }
+                //    }
+                //    catch
+                //    { }
+                //    try
+                //    {
+                //        if (!搜尋信件已經輸入 && ChromeGoGo.FindElements(By.Name("q")).Count > 0)
+                //        {
+                //            IWebElement element = ChromeGoGo.FindElement(By.Name("q")); //信箱完繼續按鈕
+                //            element.SendKeys("to:(jianhuajian3@gmail.com) subject:(\"google\") 歡迎 -in:chats after:2023/3/31");
+                //            element.SendKeys(OpenQA.Selenium.Keys.Enter);
+                //            搜尋信件已經輸入 = true;
+                //            IWebElement searchButton = ChromeGoGo.FindElement(By.XPath("searchButtonXPath"));
+                //            searchButton.Click();
+                //        }
+                //    }
+                //    catch
+                //    { }
+
+                //    try
+                //    {
+                //        if (ChromeGoGo.FindElements(By.CssSelector(".xW.xY>.y6>span")).Count > 0)
+                //        {
+                //            var element = ChromeGoGo.FindElements(By.CssSelector(".xW.xY>.y6>span")); //信箱完繼續按鈕
+                //            foreach (var subject in element)
+                //            {
+                //                MessageBox.Show($"Subject: {subject.Text}");
+                //            }
+                //        }
+                //    }
+                //    catch
+                //    { }
+                //}
+
+                lock (_lockObject2)
+                {
+                    foreach (DataGridViewRow row in dataGridView2.Rows)
+                    {
+                        if (row.Cells["餅乾路徑"].Value.ToString() == 選擇哪個路徑)
+                        {
+                            row.DefaultCellStyle.BackColor = System.Drawing.Color.Green;
+                        }
+                    }
+                }
+                lock (_lockObject3)
+                {
+                    保存瀏覽器物件繼續調用字典[選擇哪個路徑] = (選擇哪個路徑, ChromeGoGo, sheetsService, 使用哪個UserAgent保存);
+                }
+                lock (_lockObject4)
+                {
+                    if (瀏覽器Cookie路徑.ToString() == "自動註冊")
+                    {
+                        foreach (DataGridViewRow row in dataGridView2.Rows)
+                        {
+                            if (row.Cells["餅乾路徑"].Value.ToString() == 選擇哪個路徑)
+                            {
+                                dataGridView2_CellContentClick(dataGridView2, new DataGridViewCellEventArgs(row.Cells["註冊"].ColumnIndex, row.Index));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+        }
+        bool 是否中斷所有while = false;
+        private void dataGridView2_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+            this.BeginInvoke((Action)delegate ()
+            {
+                Task.Factory.StartNew((Action)delegate ()
+                {
+                    try
+                    {
+                
+                        if (dataGridView2.Columns[e.ColumnIndex].Name == "啟動")
+                        {
+                            WorkerThread(dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value);
+                        }
+                        else if (dataGridView2.Columns[e.ColumnIndex].Name == "註冊" && dataGridView2.Rows[e.RowIndex].DefaultCellStyle.BackColor == System.Drawing.Color.Green)
+                        {
+                            UndetectedChromeDriver ChromeGoGo = 保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item2;
+                            Random random = new Random();
+                            重頭來過不重開瀏覽器了:
+                            var 所有台灣空門號大全List陣列 = GetSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1kHppk2jAhzZj7a_6RxSyEBbhbWKii2n5Q1D65fgSk8A");//從Google Sheet取得所有UserAgent
+                            string 台灣隨機門號 = 所有台灣空門號大全List陣列[random.Next(所有台灣空門號大全List陣列.Count - 1)][0].ToString();
+                            dataGridView2.Rows[e.RowIndex].Cells["註冊門號"].Value = 台灣隨機門號;
+                            DeleteSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1kHppk2jAhzZj7a_6RxSyEBbhbWKii2n5Q1D65fgSk8A", 所有台灣空門號大全List陣列, 台灣隨機門號);
+
+                            var 所有姓氏姓名大全List陣列 = GetSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1O2VMb6kRuhhreKkaRg2uXOZmsb5e3FvVG9JAUzG-K88");//從Google Sheet取得所有UserAgent
+                            string 完整姓氏姓名 = 所有姓氏姓名大全List陣列[random.Next(所有姓氏姓名大全List陣列.Count - 1)][0].ToString();
+                            string 姓氏 = 完整姓氏姓名.Substring(0, 1); // 姓氏是第一个字
+                            string 名字 = 完整姓氏姓名.Substring(1); // 名字是第二个字开始的所有字符
+                            dataGridView2.Rows[e.RowIndex].Cells["註冊暱稱"].Value = 完整姓氏姓名;
+                            DeleteSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1O2VMb6kRuhhreKkaRg2uXOZmsb5e3FvVG9JAUzG-K88", 所有姓氏姓名大全List陣列, 完整姓氏姓名);
+
+                            Dictionary<string, string> 公共Gmail信箱帳號密碼字典 = new Dictionary<string, string>();
+                            IList<IList<object>> UserAgent全域List陣列 = null;
+                            if (form4.使用自定義Gmail信箱Checkbox.Checked)
+                            {
+                                string input = form4.richTextBox2.Text;//確認是否使用自定義gmail已經打勾，然後提取richtextbox輸入內容
+                                string[] lines = input.Split('\n');
+                                foreach (string line in lines)
+                                {
+                                    string[] parts = line.Trim().Split(' ');
+                                    if (parts.Length == 2)
+                                    {
+                                        公共Gmail信箱帳號密碼字典.Add(parts[0], parts[1]);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                UserAgent全域List陣列 = GetSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1eFCMZ9LZtvdAN2XTpG9AzBd9gq1GKa8RdVa1wasgeV0");//從Google Sheet取得所有UserAgent
+                                if (UserAgent全域List陣列 == null)
+                                {
+                                    MessageBox.Show("暫無可用公共信箱，請使用自己的信箱");
+                                    return;
+                                }
+                                foreach (var j in UserAgent全域List陣列)
+                                {
+                                    公共Gmail信箱帳號密碼字典.Add(j[0].ToString(), j[1].ToString());
+                                }
+                            }
+                            var 隨機生成公共Gmail帳號密碼 = 公共Gmail信箱帳號密碼字典.Keys.ToArray()[random.Next(公共Gmail信箱帳號密碼字典.Count)];
+
+                            DateTime now = DateTime.Now;
+                            dataGridView2.Rows[e.RowIndex].Cells["創建時間"].Value = now.ToString("yyyy-MM-dd HH:mm");
+
+                            string username = 隨機生成公共Gmail帳號密碼;
+
+                            // Generate all email combinations with dots
+                            var emailCombinations = GenerateAllEmailCombinationsWithDots(username);
+
+                            // Shuffle the email combinations twice
+                            var shuffledEmailCombinations = emailCombinations.OrderBy(x => random.Next()).ToList();
+                            shuffledEmailCombinations = shuffledEmailCombinations.OrderBy(x => random.Next()).ToList();
+
+                            // Select a random email combination from the shuffled list
+                            int randomIndex = random.Next(shuffledEmailCombinations.Count);
+                            var 完整信箱 = shuffledEmailCombinations[randomIndex];
+
+                            dataGridView2.Rows[e.RowIndex].Cells["註冊信箱"].Value = 完整信箱;
+                            dataGridView2.Rows[e.RowIndex].Cells["註冊信箱應用密碼"].Value = 公共Gmail信箱帳號密碼字典[隨機生成公共Gmail帳號密碼];
+
+                            Actions actions = new Actions(ChromeGoGo);
+                            bool 確認免運點擊已經點了 = false;
+                            while (!是否中斷所有while)
+                            {
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/a[3]")).Count > 0)
+                                    {
+                                        IWebElement 註冊 = ChromeGoGo.FindElement(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/a[3]"));
+                                        註冊.Click();//註冊
+                                    }
+                                }
+                                catch
+                                { }               
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/a[2]")).Count > 0)
+                                    {
+                                        IWebElement 註冊 = ChromeGoGo.FindElement(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/a[2]"));
+                                        註冊.Click();//註冊
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/a[3]")).Count > 0) //useragent瀏覽器太老舊
+                                    {
+                                        UserAgent全域List陣列 = GetSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE");//從Google Sheet取得所有UserAgent
+                                        DeleteSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE", UserAgent全域List陣列, 保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item4);
+                                        ChromeGoGo.Quit();
+                                        ChromeGoGo.Dispose();
+                                        Task.Delay(1500);
+                                        Directory.Delete(dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString(), true);
+                                        dataGridView2.Rows.RemoveAt(e.RowIndex);
+                                        ThreadPool.QueueUserWorkItem(new WaitCallback(WorkerThread), "自動註冊");
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/div[4]/div[6]/button")).Count > 0)
+                                    {
+                                        IWebElement element = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/div[4]/div[6]/button"));
+                                        string buttonText = element.Text.Trim();
+
+                                        if (buttonText == "使用電子郵件繼續")
+                                        {
+                                            actions.MoveToElement(element).Click().Perform(); // 將鼠标移动到目标元素上并模拟点击
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id='PHONE_NUMBER_or_EMAIL_ADDRESS']")).Count > 0)
+                                    {
+                                        IWebElement element = ChromeGoGo.FindElement(By.XPath("//*[@id='PHONE_NUMBER_or_EMAIL_ADDRESS']")); //信箱輸入框
+                                        string inputText = element.GetAttribute("value");
+                                        if (string.IsNullOrEmpty(inputText))
+                                        {
+                                            element.SendKeys(完整信箱);
+                                        }
+                                    }
+                                }
+                                catch
+                                { }                   
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"EMAIL_ADDRESS\"]")).Count > 0)
+                                    {
+                                        IWebElement element = ChromeGoGo.FindElement(By.XPath("//*[@id=\"EMAIL_ADDRESS\"]")); //信箱輸入框
+                                        string inputText = element.GetAttribute("value");
+                                        if (string.IsNullOrEmpty(inputText))
+                                        {
+                                            element.SendKeys(完整信箱);
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/button/div")).Count > 0)
+                                    {
+                                        IWebElement element = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/button/div")); //信箱完繼續按鈕
+                                        actions.MoveToElement(element).Click().Perform(); // 将鼠标移动到目标元素上并模拟点击
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"EMAIL_OTP_CODE-0\"]")).Count > 0)
+                                    {
+                                        using (var client = new ImapClient())
+                                        {
+                                            ServicePointManager.ServerCertificateValidationCallback = (s, certificate, chain, sslPolicyErrors) => true; //忽略憑證
+                                            client.Connect("imap.gmail.com", 993, true);
+                                            client.Authenticate(隨機生成公共Gmail帳號密碼, 公共Gmail信箱帳號密碼字典[隨機生成公共Gmail帳號密碼]);
+                                            client.Inbox.Open(FolderAccess.ReadWrite);
+
+                                            // 僅搜索來自Uber並發送給指定收件人的郵件
+                                            var searchQuery = SearchQuery.FromContains("admin@uber.com").And(SearchQuery.ToContains(完整信箱));
+                                            var messages = client.Inbox.Search(searchQuery);
+                                            int messageCount = messages.Count();
+
+                                            foreach (var message in messages)
+                                            {
+                                                var email = client.Inbox.GetMessage(message);
+                                                IWebElement element = ChromeGoGo.FindElement(By.XPath("//*[@id=\"EMAIL_OTP_CODE-0\"]")); //信箱完繼續按鈕
+                                                element.SendKeys(Regex.Match(email.HtmlBody, @"(?<=<p>)\d{4}(?=</p>)").Value);
+
+                                                if (messageCount >= 10)
+                                                {
+                                                    client.Inbox.MoveTo(message, client.GetFolder("[Gmail]/垃圾桶"));
+                                                }
+                                            }
+
+                                            client.Disconnect(true);
+                                        }
+                                    }
+                                }
+                                catch (Exception e)
+                                {
+                                    if (!e.Message.Contains("window already closed") && e.Message.Contains("not found"))
+                                    {
+                                        MessageBox.Show(e.Message + " 這信箱可能爆了，建議你重創一個指紋瀏覽器並且換一個信箱");
+                                    }
+                                }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"EMAIL_OTP_CODE-error\"]")).Count > 0)
+                                    {
+                                        var emailErrorElements = ChromeGoGo.FindElements(By.XPath("//*[@id=\"EMAIL_OTP_CODE-error\"]"));
+                                        string errorMessage = emailErrorElements[0].Text;
+                                        if (!string.IsNullOrEmpty(errorMessage) && errorMessage.Contains("電子信箱密碼錯誤"))
+                                        {
+                                            ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                            goto 重頭來過不重開瀏覽器了;
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[1]/div[2]/div/div/bdi/div[2]/div[2]/input")).Count > 0)
+                                    {
+                                        IWebElement 手機號碼輸入框 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[1]/div[2]/div/div/bdi/div[2]/div[2]/input"));
+                                        string inputText = 手機號碼輸入框.GetAttribute("value");
+
+                                        if (string.IsNullOrEmpty(inputText))
+                                        {
+                                            手機號碼輸入框.SendKeys(台灣隨機門號);
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"alt-alternate-forms-option-modal\"]")).Count > 0)//手機號被註冊
+                                    {
+                                        ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                        goto 重頭來過不重開瀏覽器了;
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[3]/div/button[2]/div/div[2]")).Count > 0)
+                                    {
+                                        IWebElement 下一步按鈕 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[3]/div/button[2]/div/div[2]"));
+                                        actions.MoveToElement(下一步按鈕).Click().Perform(); // 将鼠标移动到目标元素上并模拟点击
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[3]/button[2]/div/div[2]")).Count > 0)
+                                    {
+                                        IWebElement 下一步按鈕 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[3]/button[2]/div/div[2]"));
+                                        actions.MoveToElement(下一步按鈕).Click().Perform(); // 将鼠标移动到目标元素上并模拟点击
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[4]/div[2]/div/div/div/div[2]/div/div/button[1]/div/div[2]")).Count > 0)
+                                    {
+                                        IWebElement 帳號已被註冊過 = ChromeGoGo.FindElement(By.XPath("/html/body/div[4]/div[2]/div/div/div/div[2]/div/div/button[1]/div/div[2]"));
+                                        ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                        goto 重頭來過不重開瀏覽器了;
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"FIRST_NAME\"]")).Count > 0)
+                                    {
+                                        IWebElement 名字輸入框 = ChromeGoGo.FindElement(By.XPath("//*[@id=\"FIRST_NAME\"]"));
+                                        名字輸入框.SendKeys(名字);
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"LAST_NAME\"]")).Count > 0)
+                                    {
+                                        IWebElement 姓氏輸入框 = ChromeGoGo.FindElement(By.XPath("//*[@id=\"LAST_NAME\"]"));
+                                        姓氏輸入框.SendKeys(姓氏);
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[3]/div[1]/label/span")).Count > 0)
+                                    {
+                                        IWebElement 我同意打勾按鈕 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div/div[3]/div[1]/label/span"));
+                                        actions.MoveToElement(我同意打勾按鈕).Click().Perform();
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[4]/div[2]/div/div/div/div/h1")).Count > 0) //註冊失敗
+                                    {
+                                        UserAgent全域List陣列 = GetSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE");//從Google Sheet取得所有UserAgent
+                                        DeleteSheetData(保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item3, "1ssSyxBkzzXgOalWHQYFfRIxTTkT7uRvP1SJRHiFpNRE", UserAgent全域List陣列, 保存瀏覽器物件繼續調用字典[dataGridView2.Rows[e.RowIndex].Cells["餅乾路徑"].Value.ToString()].Item4);
+                                        ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                        goto 重頭來過不重開瀏覽器了;
+                                    }
+                                }
+                                catch
+                                { }
+                                /////////////////註冊完成後
+                                try
+                                {
+                                    try
+                                    {
+                                        if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/p[1]")).Count > 0)
+                                        {
+                                            IWebElement element = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div/div[2]/div/div[1]/div[1]/div[2]/p[1]")); //信箱輸入框輸入後卡死
+                                            string inputText = element.GetAttribute("value");
+                                            if (inputText.Contains("請輸入電話號碼"))
+                                            {
+                                                ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                                goto 重頭來過不重開瀏覽器了;
+                                            }
+                                        }
+                                    }
+                                    catch
+                                    { }
+
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"location-typeahead-home-input\"]")).Count > 0 || ChromeGoGo.FindElements(By.XPath("/html/body/div/div[1]/div[2]/main/div/div/div[1]/div[4]/input")).Count > 0)
+                                    {
+                                        if (string.IsNullOrEmpty(Convert.ToString(dataGridView2.Rows[e.RowIndex].Cells["推薦碼"].Value)))
+                                        {
+                                            if (ChromeGoGo.FindElements(By.XPath("/html/body/div/div[1]/div[2]/main/div/div/div[1]/div[4]/input")).Count > 0)
+                                            {
+                                                var 獲取推薦碼 = ChromeGoGo.FindElement(By.XPath("/html/body/div/div[1]/div[2]/main/div/div/div[1]/div[4]/input"));
+                                                dataGridView2.Rows[e.RowIndex].Cells["推薦碼"].Value = 獲取推薦碼.GetAttribute("value");
+                                                Thread.Sleep(2000);
+                                                ChromeGoGo.FindElement(By.XPath("//*[@id=\"wrapper\"]/header/div/div/div/div/div[1]/a/img")).Click();
+                                            }
+                                            else
+                                            {
+                                                ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/invite");
+                                                Thread.Sleep(1000);
+                                            }
+                                        }
+                                        else if (Convert.ToString(dataGridView2.Rows[e.RowIndex].Cells["推薦碼"].Value).Contains("eats-"))
+                                        {
+                                            Task.Delay(500);
+                                            IWebElement 點選地址並輸入 = ChromeGoGo.FindElement(By.XPath("//*[@id=\"location-typeahead-home-input\"]"));
+                                            Task.Delay(500);
+                                            string inputText = 點選地址並輸入.GetAttribute("value");
+                                            if (!string.IsNullOrEmpty(預設地址Combobox.Text))
+                                            {
+                                                Task.Delay(500);
+                                                dataGridView2.Rows[e.RowIndex].Cells["地址"].Value = 預設地址Combobox.Text;
+                                                if (string.IsNullOrEmpty(inputText))
+                                                {
+                                                    點選地址並輸入.Click();
+                                                    點選地址並輸入.SendKeys(預設地址Combobox.Text);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div[1]/div[2]/main/div/div[1]/div[3]")).Count > 0)
+                                    {
+                                        IWebElement 判斷是否有奇怪的錯誤 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div[1]/div[2]/header/div/div/div[1]/a/img"));
+                                        actions.MoveToElement(判斷是否有奇怪的錯誤).Click().Perform(); // 将鼠标移动到目标元素上并模拟点击
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    string pageSource = ChromeGoGo.PageSource;
+
+                                    if (pageSource.Contains("too many requests"))
+                                    {
+                                        ChromeGoGo.Navigate().GoToUrl("https://www.ubereats.com/tw/");
+                                        goto 重頭來過不重開瀏覽器了;
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"location-typeahead-home-item-0\"]")).Count > 0)
+                                    {
+                                        if (ChromeGoGo.FindElements(By.XPath("//*[@id=\"location-typeahead-home-item-0\"]"))[0].Text.Contains("找不到這個地址"))
+                                        {
+                                            Task.Delay(500);
+                                            ChromeGoGo.FindElement(By.XPath("//*[@id=\"location-typeahead-home-input\"]")).Clear();
+                                        }
+                                        else
+                                        {
+                                            Task.Delay(500);
+                                            ChromeGoGo.FindElement(By.XPath("//*[@id=\"location-typeahead-home-item-0\"]")).Click();
+                                        }
+                                    }
+                                }
+                                catch
+                                { }
+
+                                try
+                                {
+                                    if (ChromeGoGo.FindElements(By.XPath("/html/body/div[1]/div[1]/div[2]/div[4]/div/div/div[2]/div[3]/div/button/div")).Count > 0)
+                                    {
+                                        IWebElement 免運點擊 = ChromeGoGo.FindElement(By.XPath("/html/body/div[1]/div[1]/div[2]/div[4]/div/div/div[2]/div[3]/div/button/div"));
+                                        免運點擊.Click();
+                                        Task.Delay(100);
+                                        if (!string.IsNullOrEmpty(預設店家網址Combobox.Text))
+                                        {
+                                            ChromeGoGo.Navigate().GoToUrl(預設店家網址Combobox.Text);
+                                        }
+                                        if (改成後台運行.Checked)
+                                        {
+                                            Task.Delay(4000);
+                                            ChromeGoGo.Quit();
+                                            Task.Delay(500);
+                                            ChromeGoGo.Dispose();
+                                            Task.Delay(1500);
+                                            dataGridView2_CellContentClick(dataGridView2, new DataGridViewCellEventArgs(dataGridView2.Rows[e.RowIndex].Cells["啟動"].ColumnIndex, dataGridView2.Rows[e.RowIndex].Index));
+                                        }
+                                        break;
+                                    }
+                                }
+                                catch
+                                { }
+                                Task.Delay(1);
+                            }
+                        }
+              
+                    }
+                    catch { }
+                });
+            });
+        }
+        private void dataGridView2_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            // 檢查是否單擊了“推薦碼”列
+            if (e.ColumnIndex == dataGridView2.Columns["推薦碼"].Index && e.RowIndex >= 0)
+            {
+                // 從單元格獲取內容並將其複製到剪貼板
+                string contentToCopy = dataGridView2.Rows[e.RowIndex].Cells[e.ColumnIndex].Value.ToString();
+                Clipboard.SetText(contentToCopy);
+            }
+        }
+            static SheetsService InitializeSheetsService()
+        {
+            string[] Scopes = { SheetsService.Scope.Spreadsheets };
+            //應用程式的名字需要英文
+            string ApplicationName = "AutoRegisterUber";
+
+            //事先在程式內封裝寫入Google api金鑰，避免再額外生成json檔案
+            MemoryStream stream = new MemoryStream();
+            StreamWriter writer = new StreamWriter(stream);
+            writer.Write(@"{""installed"":{""client_id"":""789169134176-mtoo9vaqdvsrkgufc9tdc5jtq7eghgi1.apps.googleusercontent.com"",""project_id"":""friendly-bazaar-293201"",""auth_uri"":""https://accounts.google.com/o/oauth2/auth"",""token_uri"":""https://oauth2.googleapis.com/token"",""auth_provider_x509_cert_url"":""https://www.googleapis.com/oauth2/v1/certs"",""client_secret"":""X1HNYhS4y09-j6bzuTdfqApB"",""redirect_uris"":[""urn:ietf:wg:oauth:2.0:oob"",""http://localhost""]}}");
+            writer.Flush();
+            stream.Position = 0;
+
+            //事先在程式內封裝寫入Google api金鑰，避免再額外生成json檔案
+            string File1 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\sheets.googleapis.com-dotnet-quickstart.json");
+            string File2 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\sheets.googleapis.com-dotnet-quickstart.json\\Google.Apis.Auth.OAuth2.Responses.TokenResponse-user");
+            if (!Directory.Exists(File1))
+            {
+                Directory.CreateDirectory(File1);
+            }
+            if (!File.Exists(File2))
+            {
+                File.Create(File2).Close();
+            }
+            //事先在程式內封裝寫入Google api金鑰，避免再額外生成json檔案
+            StreamWriter sw = new StreamWriter(File2, false, Encoding.Default);
+            sw.WriteLine(@"{""access_token"":""ya29.a0AfH6SMD2CbI5GZGUCNPLImxRh8jH0SHk41fF5wLR8jsLWGZdKns6klPw5DhJURy1VGLQU4GBGYKxBFyvObxA61RgMTV-RFE-trMXJmKTOytrYg0IY3_JsKW_DnWLwGGz9OqVBWcScIxQk3i-N56mqCl4CJsDoYOWpTQ"",""token_type"":""Bearer"",""expires_in"":3599,""refresh_token"":""1//0ecStQJy_42cZCgYIARAAGA4SNwF-L9Ir5iqdCVOIve6UqoNP_R7vpWyzrYvZ_jhpTuZu3wq3wSqQ07aJoBvAGzg22YPM-AuQ8eM"",""scope"":""https://www.googleapis.com/auth/spreadsheets"",""Issued"":""2020-10-21T11:46:01.468+08:00"",""IssuedUtc"":""2020-10-21T03:46:01.468Z""}");
+            sw.Close();
+
+            UserCredential credential = GoogleWebAuthorizationBroker.AuthorizeAsync(GoogleClientSecrets.FromStream((stream)).Secrets, Scopes, "user", CancellationToken.None, new FileDataStore(File1, false)).Result;
+
+            return new SheetsService(new Google.Apis.Services.BaseClientService.Initializer
+            {
+                HttpClientInitializer = credential,
+                ApplicationName = ApplicationName,
+            });
+        }//調用所有Google Sheet應該有的參數
+        static IList<IList<object>> GetSheetData(SheetsService sheetsService, string spreadsheetId)
+        {
+            try
+            {
+                // 讀取 Google Sheet 中的數據
+                var range = "工作表1!A1:C30000";
+                var request = sheetsService.Spreadsheets.Values.Get(spreadsheetId, range);
+                var response = request.Execute();
+
+                return response.Values;
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        static void DeleteSheetData(SheetsService sheetsService, string spreadsheetId, IList<IList<object>> data, string target)
+        {
+            // 搜尋符合的行
+            int deleteRowIndex = -1;
+            for (int i = 0; i < data.Count; i++)
+            {
+                var row = data[i];
+                if (row.Count < 1) // 如果該行數據沒有 A 欄，跳過該行的判斷
+                {
+                    continue;
+                }
+                if (row.Count < 2) // 如果該行數據只有 A 欄，直接比對 A 欄是否有符合的數據
+                {
+                    if ((string)row[0] == target)
+                    {
+                        deleteRowIndex = i + 1;
+                        break;
+                    }
+                }
+                else // 如果該行數據有 A、B 欄，比對 A 或 B 欄是否有符合的數據
+                {
+                    if ((string)row[0] == target || (string)row[1] == target)
+                    {
+                        deleteRowIndex = i + 1;
+                        break;
+                    }
+                }
+            }
+
+            // 如果有找到，就刪除這一行
+            if (deleteRowIndex != -1)
+            {
+                var requestBody = new BatchUpdateSpreadsheetRequest
+                {
+                    Requests = new List<Google.Apis.Sheets.v4.Data.Request>
+            {
+                new Google.Apis.Sheets.v4.Data.Request
+                {
+                    DeleteDimension = new DeleteDimensionRequest
+                    {
+                        Range = new DimensionRange
+                        {
+                            SheetId = 0,
+                            Dimension = "ROWS",
+                            StartIndex = deleteRowIndex - 1,
+                            EndIndex = deleteRowIndex
+                        }
+                    }
+                }
+            }
+                };
+                var batchUpdateRequest = sheetsService.Spreadsheets.BatchUpdate(requestBody, spreadsheetId);
+                batchUpdateRequest.Execute();
+            }
+        }
+
+        private void dataGridView2_DataError(object sender, DataGridViewDataErrorEventArgs e)//取消datagridview驗證格式
+        {
+            dataGridView2.CausesValidation = false;//取消验证格式
+        }
+
+        public void 保存用戶設置到XML(List<ComboBox> 要保存的ComboBox列表, List<CheckBox> 要保存的CheckBox列表, RichTextBox 要保存的RichTextBox, DataGridView 要保存的DataGridView, string 文件路徑)
+        {
+            XmlDocument xmlDoc = new XmlDocument();
+            XmlElement root = xmlDoc.CreateElement("用戶設置");
+            xmlDoc.AppendChild(root);
+
+            int comboBoxIndex = 0;
+            foreach (ComboBox comboBox in 要保存的ComboBox列表)
+            {
+                XmlElement comboBoxElement = xmlDoc.CreateElement($"ComboBox{comboBoxIndex}");
+                root.AppendChild(comboBoxElement);
+
+                XmlElement itemsElement = xmlDoc.CreateElement("項目");
+                comboBoxElement.AppendChild(itemsElement);
+
+                foreach (string item in comboBox.Items)
+                {
+                    XmlElement itemElement = xmlDoc.CreateElement("項目");
+                    itemElement.InnerText = item;
+                    itemsElement.AppendChild(itemElement);
+                }
+
+                XmlElement selectedIndexElement = xmlDoc.CreateElement("選擇項目內容");
+                selectedIndexElement.InnerText = comboBox.SelectedItem?.ToString() ?? "";
+                comboBoxElement.AppendChild(selectedIndexElement);
+
+                comboBoxIndex++;
+            }
+
+            int checkBoxIndex = 0;
+            foreach (CheckBox checkBox in 要保存的CheckBox列表)
+            {
+                XmlElement checkBoxElement = xmlDoc.CreateElement($"CheckBox{checkBoxIndex}");
+                checkBoxElement.InnerText = checkBox.Checked.ToString();
+                root.AppendChild(checkBoxElement);
+
+                checkBoxIndex++;
+            }
+
+            XmlElement richTextBoxElement = xmlDoc.CreateElement("RichTextBox");
+            richTextBoxElement.InnerText = 要保存的RichTextBox.Text;
+            root.AppendChild(richTextBoxElement);
+
+            // 保存 DataGridView
+            XmlElement dataGridViewElement = xmlDoc.CreateElement("DataGridView");
+            root.AppendChild(dataGridViewElement);
+
+            XmlElement rowsElement = xmlDoc.CreateElement("Rows");
+            dataGridViewElement.AppendChild(rowsElement);
+
+            foreach (DataGridViewRow row in 要保存的DataGridView.Rows)
+            {
+                if (!row.IsNewRow)
+                {
+                    XmlElement rowElement = xmlDoc.CreateElement("Row");
+                    rowsElement.AppendChild(rowElement);
+
+                    for (int i = 0; i < 要保存的DataGridView.ColumnCount; i++)
+                    {
+                        if (!(要保存的DataGridView.Columns[i] is DataGridViewButtonColumn))
+                        {
+                            XmlElement cellElement = xmlDoc.CreateElement($"Cell{i}");
+                            cellElement.InnerText = row.Cells[i].Value?.ToString() ?? "";
+                            rowElement.AppendChild(cellElement);
+                        }
+                    }
+                }
+            }
+
+            xmlDoc.Save(文件路徑);
+        }
+
+        public void 讀取用戶設置從XML(List<ComboBox> 要讀取的ComboBox列表, List<CheckBox> 要讀取的CheckBox列表, RichTextBox 要讀取的RichTextBox, DataGridView 要讀取的DataGridView, string 文件路徑)
+        {
+            XmlDocument xmlDoc = new XmlDocument();
+            xmlDoc.Load(文件路徑);
+
+            XmlElement root = xmlDoc.DocumentElement;
+
+            int comboBoxIndex = 0;
+            foreach (ComboBox comboBox in 要讀取的ComboBox列表)
+            {
+                XmlNode comboBoxNode = root.SelectSingleNode($"ComboBox{comboBoxIndex}");
+
+                XmlNode itemsNode = comboBoxNode.SelectSingleNode("項目");
+                comboBox.Items.Clear();
+                foreach (XmlNode itemNode in itemsNode.ChildNodes)
+                {
+                    comboBox.Items.Add(itemNode.InnerText);
+                }
+
+                XmlNode selectedIndexNode = comboBoxNode.SelectSingleNode("選擇項目內容");
+                string selectedItem = selectedIndexNode.InnerText;
+                if (!string.IsNullOrEmpty(selectedItem))
+                {
+                    int selectedIndex = comboBox.FindStringExact(selectedItem);
+                    comboBox.SelectedIndex = selectedIndex;
+                }
+
+                comboBoxIndex++;
+            }
+
+            int checkBoxIndex = 0;
+            foreach (CheckBox checkBox in 要讀取的CheckBox列表)
+            {
+                XmlNode checkBoxNode = root.SelectSingleNode($"CheckBox{checkBoxIndex}");
+                checkBox.Checked = bool.Parse(checkBoxNode.InnerText);
+
+                checkBoxIndex++;
+            }
+
+            XmlNode richTextBoxNode = root.SelectSingleNode("RichTextBox");
+            要讀取的RichTextBox.Text = richTextBoxNode.InnerText;
+
+            // 读取 DataGridView
+            XmlNode dataGridViewNode = root.SelectSingleNode("DataGridView");
+            XmlNode rowsNode = dataGridViewNode.SelectSingleNode("Rows");
+
+            要讀取的DataGridView.Rows.Clear();
+            foreach (XmlNode rowNode in rowsNode.ChildNodes)
+            {
+                DataGridViewRow newRow = new DataGridViewRow();
+                newRow.CreateCells(要讀取的DataGridView);
+
+                for (int i = 0; i < 要讀取的DataGridView.ColumnCount; i++)
+                {
+                    if (!(要讀取的DataGridView.Columns[i] is DataGridViewButtonColumn))
+                    {
+                        XmlNode cellNode = rowNode.SelectSingleNode($"Cell{i}");
+                        newRow.Cells[i].Value = cellNode.InnerText;
+                    }
+                    else
+                    {
+                        // 为 DataGridViewButtonColumn 设置按钮文本
+                        string columnTitle = 要讀取的DataGridView.Columns[i].HeaderText;
+                        switch (columnTitle)
+                        {
+                            case "註冊":
+                                newRow.Cells[i].Value = "註冊";
+                                newRow.DefaultCellStyle.SelectionBackColor = Color.LightGray;
+                                newRow.DefaultCellStyle.SelectionForeColor = Color.Black;
+                                break;
+                            case "啟動":
+                                newRow.Cells[i].Value = "啟動";
+                                break;
+                        }
+                    }
+                }
+
+                要讀取的DataGridView.Rows.Add(newRow);
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            string filePath = "UserSettings.xml";
+            List<ComboBox> comboBoxesToSave = new List<ComboBox> { 預設暱稱Combobox, 預設地址Combobox, 預設備註Combobox, 預設網址Combobox };
+            List<CheckBox> checkBoxesToSave = new List<CheckBox> { 改成後台運行, 放門口改備註Checkbox, 最上層Checkbox, form4.使用自定義Gmail信箱Checkbox };
+            保存用戶設置到XML(comboBoxesToSave, checkBoxesToSave, form4.richTextBox2, dataGridView2, filePath);
+
+            foreach (DataGridViewRow row in dataGridView2.Rows) //將所有Port欄位的數據清空
+            {
+                row.Cells["Port"].Value = null;
+            }
+        }
+        public void RunCmd(string command) //無return的版本
+        {
+            System.Diagnostics.Process p = new System.Diagnostics.Process();
+            p.StartInfo.FileName = "cmd.exe";
+            p.StartInfo.UseShellExecute = false;     // 是否使用操作系統shell啟動 
+            p.StartInfo.RedirectStandardInput = true; // 接受來自調用程式的輸入資訊 
+                                                      //p.StartInfo.RedirectStandardOutput = true; // 由調用程式獲取輸出資訊 
+            p.StartInfo.RedirectStandardError = true; // 重定向標準錯誤輸出 
+            p.StartInfo.CreateNoWindow = true; // 不顯示程式視窗
+            p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            p.StartInfo.Arguments = "";
+            p.Start(); // 啟動程式
+
+            // 向cmd視窗發送輸入資訊 
+            p.StandardInput.WriteLine(command);
+            p.StandardInput.WriteLine("exit");
+            p.StandardInput.AutoFlush = true;
+            p.WaitForExit(); // 等待程式執行完退出進程
+                             //MessageBox.Show(p.StandardOutput.ReadToEnd());
+            p.Close();
+        }
+        private void button1_Click(object sender, EventArgs e)
+        {
+            Task.Run(() =>
+            {
+                是否中斷所有while = true;
+                // 取得所有正在運行的進程
+                var processes = Process.GetProcesses();
+                // 遍歷每個進程
+                foreach (var process in processes)
+                {
+                    // 如果進程名以 "chromedriver" 開頭
+                    if (process.ProcessName.StartsWith("chromedriver"))
+                    {
+                        // 強制關閉該進程
+                        process.Kill();
+                    }
+                }
+                RunCmd("taskkill /f /im conhost.exe");
+                var query = new SelectQuery("SELECT CommandLine, ProcessId FROM Win32_Process WHERE Name='chrome.exe' and CommandLine like '%remote-debugging-port=%' and not CommandLine like '%type=renderer%'");
+                var searcher = new ManagementObjectSearcher(query);
+                var commandLinesAndProcessIds = searcher.Get().Cast<ManagementObject>().Select(p => new { CommandLine = p["CommandLine"].ToString(), ProcessId = (uint)p["ProcessId"] }).ToList();
+
+                foreach (var item in commandLinesAndProcessIds)
+                {
+                    var userDataDirMatch = Regex.Match(item.CommandLine, @"--user-data-dir=(.+?)(\s|$)");
+                    var portMatch = Regex.Match(item.CommandLine, @"--remote-debugging-port=(\d+)");
+
+                    if (userDataDirMatch.Success)
+                    {
+                        // MessageBox.Show(item.CommandLine);
+                        var userDataDir = userDataDirMatch.Groups[1].Value;
+                        var port = int.Parse(portMatch.Groups[1].Value);
+                        var processId = item.ProcessId;
+
+                        // 结束进程
+                        RunCmd(@$"taskkill /f /pid {processId}");
+                    }
+                }
+                是否中斷所有while = false;
+            });
+        }
+        public string 生成帶隨機點的新字串(string 原有字串)
+        {
+            string 原有字串複製 = 原有字串;
+            int 最大能加入點的數量 = 9;
+            char[] 拆分原有字串數組 = 原有字串.ToCharArray();
+            Random random = new Random();
+            int 想要隨機插入點的數量 = random.Next(1, 最大能加入點的數量 + 1);
+
+            for (int i = 1; i <= 想要隨機插入點的數量; i++)
+            {
+                int 隨機插入位置 = random.Next(1, 拆分原有字串數組.Length);
+                while (是否中斷所有while && 拆分原有字串數組[隨機插入位置] == '.' || 拆分原有字串數組[隨機插入位置 - 1] == '.')
+                {
+                    隨機插入位置 = random.Next(1, 拆分原有字串數組.Length);
+                }
+                Array.Resize(ref 拆分原有字串數組, 拆分原有字串數組.Length + 1);
+                for (int j = 拆分原有字串數組.Length - 2; j >= 隨機插入位置; j--)
+                {
+                    拆分原有字串數組[j + 1] = 拆分原有字串數組[j];
+                }
+                拆分原有字串數組[隨機插入位置] = '.';
+            }
+
+            string 新字串 = new string(拆分原有字串數組);
+            return 新字串;
+        }
+        private void 預設暱稱Combobox_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            try
+            {
+                if (e.KeyChar == (char)System.Windows.Forms.Keys.Enter)
+                {
+                    if (!string.IsNullOrEmpty(預設暱稱Combobox.Text))
+                    {
+                        if (!預設暱稱Combobox.Items.Contains(預設暱稱Combobox.Text))
+                        {
+                            預設暱稱Combobox.Items.Add(預設暱稱Combobox.Text);
+                            預設暱稱Combobox.DroppedDown = true;
+                            預設暱稱Combobox.DroppedDown = false;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 預設暱稱Combobox_Leave(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(預設暱稱Combobox.Text))
+                {
+                    if (!預設暱稱Combobox.Items.Contains(預設暱稱Combobox.Text))
+                    {
+                        預設暱稱Combobox.Items.Add(預設暱稱Combobox.Text);
+                        預設暱稱Combobox.DroppedDown = true;
+                        預設暱稱Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 預設暱稱Combobox_KeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+                {
+                    int selectedIndex = 預設暱稱Combobox.SelectedIndex;
+                    if (selectedIndex != -1)
+                    {
+                        預設暱稱Combobox.Items.RemoveAt(selectedIndex);
+                        預設暱稱Combobox.DroppedDown = true;
+                        預設暱稱Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設地址Combobox_Leave(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(預設地址Combobox.Text))
+                {
+                    if (!預設地址Combobox.Items.Contains(預設地址Combobox.Text))
+                    {
+                        預設地址Combobox.Items.Add(預設地址Combobox.Text);
+                        預設地址Combobox.DroppedDown = true;
+                        預設地址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 預設地址Combobox_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            try
+            {
+                if (e.KeyChar == (char)System.Windows.Forms.Keys.Enter)
+                {
+                    if (!string.IsNullOrEmpty(預設地址Combobox.Text))
+                    {
+                        if (!預設地址Combobox.Items.Contains(預設地址Combobox.Text))
+                        {
+                            預設地址Combobox.Items.Add(預設地址Combobox.Text);
+                            預設地址Combobox.DroppedDown = true;
+                            預設地址Combobox.DroppedDown = false;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 預設地址Combobox_KeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+                {
+                    int selectedIndex = 預設地址Combobox.SelectedIndex;
+                    if (selectedIndex != -1)
+                    {
+                        預設地址Combobox.Items.RemoveAt(selectedIndex);
+                        預設地址Combobox.DroppedDown = true;
+                        預設地址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設備註Combobox_KeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+                {
+                    int selectedIndex = 預設備註Combobox.SelectedIndex;
+                    if (selectedIndex != -1)
+                    {
+                        預設備註Combobox.Items.RemoveAt(selectedIndex);
+                        預設備註Combobox.DroppedDown = true;
+                        預設備註Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設備註Combobox_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            try
+            {
+                if (e.KeyChar == (char)System.Windows.Forms.Keys.Enter)
+                {
+                    if (!string.IsNullOrEmpty(預設備註Combobox.Text))
+                    {
+                        if (!預設備註Combobox.Items.Contains(預設備註Combobox.Text))
+                        {
+                            預設備註Combobox.Items.Add(預設備註Combobox.Text);
+                            預設備註Combobox.DroppedDown = true;
+                            預設備註Combobox.DroppedDown = false;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設備註Combobox_Leave(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(預設備註Combobox.Text))
+                {
+                    if (!預設備註Combobox.Items.Contains(預設備註Combobox.Text))
+                    {
+                        預設備註Combobox.Items.Add(預設備註Combobox.Text);
+                        預設備註Combobox.DroppedDown = true;
+                        預設備註Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 預設網址Combobox_KeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+                {
+                    int selectedIndex = 預設網址Combobox.SelectedIndex;
+                    if (selectedIndex != -1)
+                    {
+                        預設網址Combobox.Items.RemoveAt(selectedIndex);
+                        預設網址Combobox.DroppedDown = true;
+                        預設網址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設網址Combobox_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            try
+            {
+                if (e.KeyChar == (char)System.Windows.Forms.Keys.Enter)
+                {
+                    if (!string.IsNullOrEmpty(預設網址Combobox.Text))
+                    {
+                        if (!預設網址Combobox.Items.Contains(預設網址Combobox.Text))
+                        {
+                            預設網址Combobox.Items.Add(預設網址Combobox.Text);
+                            預設網址Combobox.DroppedDown = true;
+                            預設網址Combobox.DroppedDown = false;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設網址Combobox_Leave(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(預設網址Combobox.Text))
+                {
+                    if (!預設網址Combobox.Items.Contains(預設網址Combobox.Text))
+                    {
+                        預設網址Combobox.Items.Add(預設網址Combobox.Text);
+                        預設網址Combobox.DroppedDown = true;
+                        預設網址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch
+            { }
+        }
+
+        private void 預設店家網址Combobox_KeyDown(object sender, KeyEventArgs e)
+        {
+            try
+            {
+                if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+                {
+                    int selectedIndex = 預設店家網址Combobox.SelectedIndex;
+                    if (selectedIndex != -1)
+                    {
+                        預設店家網址Combobox.Items.RemoveAt(selectedIndex);
+                        預設店家網址Combobox.DroppedDown = true;
+                        預設店家網址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設店家網址Combobox_KeyPress(object sender, KeyPressEventArgs e)
+        {
+            try
+            {
+                if (e.KeyChar == (char)System.Windows.Forms.Keys.Enter)
+                {
+                    if (!string.IsNullOrEmpty(預設店家網址Combobox.Text))
+                    {
+                        if (!預設店家網址Combobox.Items.Contains(預設店家網址Combobox.Text))
+                        {
+                            預設店家網址Combobox.Items.Add(預設店家網址Combobox.Text);
+                            預設店家網址Combobox.DroppedDown = true;
+                            預設店家網址Combobox.DroppedDown = false;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void 預設店家網址Combobox_Leave(object sender, EventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(預設店家網址Combobox.Text))
+                {
+                    if (!預設店家網址Combobox.Items.Contains(預設店家網址Combobox.Text))
+                    {
+                        預設店家網址Combobox.Items.Add(預設店家網址Combobox.Text);
+                        預設店家網址Combobox.DroppedDown = true;
+                        預設店家網址Combobox.DroppedDown = false;
+                    }
+                }
+            }
+            catch
+            { }
+        }
+
+        private void 設定到餐提醒按鈕_Click(object sender, EventArgs e)
+        {
+            form3.StartPosition = FormStartPosition.Manual;
+            form3.Location = 設定到餐提醒按鈕.PointToScreen(new System.Drawing.Point(-form3.Width, 設定到餐提醒按鈕.Height));
+            form3.TopMost = true;
+            form3.Show();
+        }
+        private async void PlayMp3()//播放音檔
+        {
+            try
+            {
+                if (form3.checkBox2.Checked)
+                {
+                    if (string.IsNullOrEmpty(form3.textBox1.Text))
+                    {
+                        MessageBox.Show("請先選擇鈴聲檔案");
+                        return;
+                    }
+                    try
+                    {
+                        WaveFileReader reader = new WaveFileReader(form3.textBox1.Text);
+                        WaveOut wout = new WaveOut();
+                        wout.Init(reader);             // 通过 IWaveProvider 为音频输出初始化
+                        wout.Play();
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        MessageBox.Show("找不到播放檔案");
+                    }
+                    catch (Exception)
+                    {
+                        using (var mp3Reader = new Mp3FileReader(form3.textBox1.Text))
+                        using (var waveOut = new WaveOutEvent())
+                        {
+                            waveOut.Init(mp3Reader);
+                            waveOut.Play();
+
+                            // 等待音频播放完毕
+                            while (waveOut.PlaybackState == PlaybackState.Playing)
+                            {
+                                await Task.Delay(100);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // 使用內置的音頻
+                    Assembly assembly = Assembly.GetExecutingAssembly();
+                    Stream audioStream = assembly.GetManifestResourceStream("外送自動註冊.您的餐點快到拉.mp3");
+                    using (var mp3Reader = new Mp3FileReader(audioStream))
+                    using (var waveOut = new WaveOutEvent())
+                    {
+                        waveOut.Init(mp3Reader);
+                        waveOut.Play();
+
+                        // 等待音频播放完毕
+                        while (waveOut.PlaybackState == PlaybackState.Playing)
+                        {
+                            await Task.Delay(100);
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+        private void 最上層Checkbox_CheckedChanged(object sender, EventArgs e)
+        {
+            if (最上層Checkbox.Checked)
+            {
+                this.TopMost = true;
+            }
+            else
+            {
+                this.TopMost = false;
+            }
+        }
+        private void button3_Click(object sender, EventArgs e)
+        {
+            form4.StartPosition = FormStartPosition.Manual;
+            form4.Location = dataGridView2.PointToScreen(new System.Drawing.Point(0, button3.Height));
+            form4.TopMost = true;
+            form4.Show();
+        }
+        private void button2_Click(object sender, EventArgs e)
+        {
+            string ip = new WebClient().DownloadString("https://ipinfo.io/ip").Trim();
+
+            WebClient client = new WebClient();
+            string json = client.DownloadString($"http://ip-api.com/json/{ip}?fields=country");
+            JObject jObject = JObject.Parse(json);
+
+            string country = jObject["country"].ToString();
+            MessageBox.Show($"實體外網IP地址:{ip}\n國家:{country}");
+        }
+
+        private void dataGridView2_RowHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            //DataGridViewRow selectedRow = dataGridView2.Rows[e.RowIndex];
+            //if (selectedRow.DefaultCellStyle.BackColor != Color.Green)
+            //{
+            //    selectedRow.DefaultCellStyle.BackColor = Color.Yellow;
+            //}
+            //else
+            //{
+            //    selectedRow.Selected = false;
+            //}
+        }
+        static void 自動生成Json和Js檔案Google擴充路徑()
+        {
+            string folderPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\ChromedriverFinger\";
+            string manifestPath = folderPath + @"\manifest.json";
+            string jsPath = folderPath + @"\background.js";
+
+            // 檢查目錄是否存在，不存在則創建
+            if (!Directory.Exists(folderPath))
+            {
+                Directory.CreateDirectory(folderPath);
+            }
+
+            // 創建新的 manifest.json 文件並向其中寫入 json 內容
+            string jsonContent = @"
+{
+  ""name"": ""WhileSwitchWebGL"",
+  ""version"": ""1.0"",
+  ""description"": ""WhileSwitchWebGL"",
+  ""manifest_version"": 2,
+  ""permissions"": [
+    ""storage"",
+    ""notifications"",
+    ""privacy"",
+    ""http://*/*"",
+    ""https://*/*"",
+    ""webNavigation"",
+    ""webRequest"",
+    ""webRequestBlocking"",
+    ""tabs"",
+    ""<all_urls>""
+  ],
+  ""background"": {
+    ""scripts"": [""background.js""],
+    ""persistent"": true
+  },
+  ""content_scripts"": [
+    {
+      ""matches"": [""<all_urls>""],
+      ""js"": [""background.js""],
+      ""run_at"": ""document_end""
+    }
+  ]
+}";
+
+            using (StreamWriter sw = new StreamWriter(manifestPath))
+            {
+                sw.Write(jsonContent);
+            }
+
+            // 創建新的 script.js 文件並向其中寫入 jsCode 內容
+            string jsCode = @"let script = document.createElement(""script"");
+	script.textContent = ""("" + (function() {
+		""use strict"";
+		let debug = function (topOnly) {
+			if (!topOnly || window === window.top) {
+				// debugger;
+			}
+		};
+		(function () {
+			document.documentElement.dataset.fbscriptallow = true;
+		})();
+		let randomChange = function (n, m) {
+			if (!m) {
+				m = 0.1;
+			}
+			return Math.round(n + ((Math.random() - 0.5) * 2 * n * 0.3));
+		};
+		let setValue = function (object, propertyName, value, writable) {
+			if (!writable) {
+				writable = false;
+			}
+			Object.defineProperty(object, propertyName, {
+				value: value,
+				writable: writable,
+				enumerable: true
+			});
+		};
+		(function () { // Date
+			window.Date.prototype.getDate					=	window.Date.prototype.getUTCDate					;
+			window.Date.prototype.getDay					=	window.Date.prototype.getUTCDay						;
+			window.Date.prototype.getFullYear				=	window.Date.prototype.getUTCFullYear				;
+			window.Date.prototype.getHours					=	window.Date.prototype.getUTCHours					;
+			window.Date.prototype.getMilliseconds			=	window.Date.prototype.getUTCMilliseconds			;
+			window.Date.prototype.getMinutes				=	window.Date.prototype.getUTCMinutes					;
+			window.Date.prototype.getMonth					=	window.Date.prototype.getUTCMonth					;
+			window.Date.prototype.getSeconds				=	window.Date.prototype.getUTCSeconds					;
+			window.Date.prototype.getTimezoneOffset			=	function () { return 0; }							;
+			window.Date.prototype.getYear					=	function () { return this.getFullYear - 1900; }		;
+			window.Date.prototype.setDate					=	window.Date.prototype.setUTCDate					;
+			window.Date.prototype.setFullYear				=	window.Date.prototype.setUTCFullYear				;
+			window.Date.prototype.setHours					=	window.Date.prototype.setUTCHours					;
+			window.Date.prototype.setMilliseconds			=	window.Date.prototype.setUTCMilliseconds			;
+			window.Date.prototype.setMinutes				=	window.Date.prototype.setUTCMinutes					;
+			window.Date.prototype.setMonth					=	window.Date.prototype.setUTCMonth					;
+			window.Date.prototype.setSeconds				=	window.Date.prototype.setUTCSeconds					;
+			window.Date.prototype.setYear					=	function (n) { return this.setFullYear(n + 1900); }	;
+			window.Date.prototype.toLocaleDateString		=	function () { return """"; }							;
+			window.Date.prototype.toLocaleString			=	function () { return """"; }							;
+			window.Date.prototype.toLocaleTimeString		=	function () { return """"; }							;
+			window.Date.prototype.toString					=	function () { return """"; }							;
+			window.Date.prototype.toTimeString				=	function () { return """"; }							;
+		})();
+		(function () { // navigator
+			let a;
+			let fakeNavigator = {};
+		//	fakeNavigator.appCodeName						=
+		//	fakeNavigator.appName							=
+		//	fakeNavigator.appVersion						=
+		//	fakeNavigator.platform							=
+			fakeNavigator.product							=
+			fakeNavigator.productSub						=
+		//	fakeNavigator.userAgent							=
+			fakeNavigator.vendor							=
+			fakeNavigator.vendorSub							=
+			a = """";
+			fakeNavigator.deviceMemory						=
+			fakeNavigator.hardwareConcurrency				=
+			fakeNavigator.maxTouchPoints					=
+			a = 0;
+			fakeNavigator.bluetooth							=
+			fakeNavigator.clipboard							=
+			fakeNavigator.connection						=
+		//	fakeNavigator.cookieEnabled						=
+			fakeNavigator.credentials						=
+			fakeNavigator.doNotTrack						=
+			fakeNavigator.geolocation						=
+			fakeNavigator.keyboard							=
+			fakeNavigator.language							=
+			fakeNavigator.locks								=
+			fakeNavigator.mediaCapabilities					=
+			fakeNavigator.mediaDevices						=
+			fakeNavigator.mediaSession						=
+		//	fakeNavigator.mimeTypes							=
+			fakeNavigator.onLine							=
+			fakeNavigator.permissions						=
+			fakeNavigator.presentation						=
+			fakeNavigator.scheduling						=
+			fakeNavigator.serviceWorker						=
+		//	fakeNavigator.storage							=
+			fakeNavigator.usb								=null;
+			fakeNavigator.userActivation					=
+			fakeNavigator.userAgentData						=
+			fakeNavigator.wakeLock							=
+			fakeNavigator.webkitPersistentStorage			=
+			fakeNavigator.webkitTemporaryStorage			=
+			fakeNavigator.xr								=
+			a = {};
+			fakeNavigator.hardwareConcurrency = Math.floor(Math.random() * 8) + 1;
+			fakeNavigator.deviceMemory = Math.floor(Math.random() * 4) + 1
+		//	fakeNavigator.platform 							= ""Win32"";
+			fakeNavigator.plugins							= [];
+			setValue(fakeNavigator.plugins, ""item"",			function item() { return null; },		false);
+			setValue(fakeNavigator.plugins, ""namedItem"",	function namedItem() { return null; },	false);
+			setValue(fakeNavigator.plugins, ""refresh"",		function refresh() { return null; },	false);
+			for (let i in window.navigator) {
+				if (fakeNavigator[i] !== undefined) {
+					try {
+						Object.defineProperty(window.navigator, i, {
+							get: function () {
+								if (fakeNavigator[i] === ""undefined"") {
+									return undefined;
+								}
+								return fakeNavigator[i];
+							}
+						});
+					} catch (e) {}
+				}
+			}
+		})();
+		(function () { // Screen size
+		let width = Math.floor(Math.random() * (1921 - 1366 + 1) + 1366);
+		let height = Math.floor(Math.random() * (1081 - 768 + 1) + 768);
+		let screenSize = [width, height];
+		screen.availWidth && setValue(screen, ""availWidth"", screenSize[0]);
+		screen.availHeight && setValue(screen, ""availHeight"", screenSize[1] - 40);
+		screen.availLeft && setValue(screen, ""availLeft"", undefined, true);
+		screen.availTop && setValue(screen, ""availTop"", undefined, true);
+		screen.width && setValue(screen, ""width"", screenSize[0]);
+		screen.height && setValue(screen, ""height"", screenSize[1]);
+		screen.Brightness && setValue(screen, ""Brightness"", randomChange(screen.Brightness));
+		screen.mozBrightness && setValue(screen, ""mozBrightness"", randomChange(screen.mozBrightness));
+		screen.left && setValue(screen, ""left"", undefined, true);
+		screen.top && setValue(screen, ""top"", undefined, true);
+		screen.enabled && setValue(screen, ""enabled"", undefined);
+		screen.mozEnabled && setValue(screen, ""mozEnabled"", undefined);
+		screen.pixelDepth && setValue(screen, ""pixelDepth"", 32);
+		screen.colorDepth && setValue(screen, ""colorDepth"", 32);
+	})();
+
+		(function () { // Debugger panel size
+			let n = Math.round(71.5 + (Math.random() * 15)), wChanged = false, wValue, hChanged = false, hValue;
+			Object.defineProperty(window, ""outerWidth"", {
+				get: function () {
+					if (!wChanged) {
+						return window.innerWidth;
+					}
+					return wValue;
+				},
+				set: function (value) {
+					wChanged = true;
+					wValue = value;
+				}
+			});
+			Object.defineProperty(window, ""outerHeight"", {
+				get: function () {
+					if (!hChanged) {
+						return window.innerHeight + n;
+					}
+					return hValue;
+				},
+				set: function (value) {
+					hChanged = true;
+					hValue = value;
+				}
+			});
+		})();
+		(function () { // AudioContext
+			let origGetFloatFrequencyData = window.AnalyserNode.prototype.getFloatFrequencyData;
+			window.AnalyserNode.prototype.getFloatFrequencyData = function getFloatFrequencyData(array) {
+				let ret = origGetFloatFrequencyData.apply(this, arguments);
+				for (let i = 0; i < array.length; i++) {
+					array[i] = array[i] + Math.random() * 0.2;
+				}
+				return ret;
+			};
+			window.AnalyserNode.prototype.getFloatFrequencyData.toString = origGetFloatFrequencyData.toString.bind(origGetFloatFrequencyData);
+			let origGetChannelData = window.AudioBuffer.prototype.getChannelData;
+			window.AudioBuffer.prototype.getChannelData = function getChannelData() {
+				let ret = origGetChannelData.apply(this, arguments);
+				for (let i = 0; i < ret.length; i++) {
+					ret[i] = ret[i] + Math.random() * 0.0001;
+				}
+				return ret;
+			};
+			window.AudioBuffer.prototype.getChannelData.toString = origGetChannelData.toString.bind(origGetChannelData);
+		})();
+		(function () { // Canvas
+			let origGetContext		= HTMLCanvasElement.prototype.getContext;
+			let origGetImageData	= CanvasRenderingContext2D.prototype.getImageData;
+			let origReadPixels1		= WebGLRenderingContext.prototype.readPixels;
+			let origReadPixels2		= WebGL2RenderingContext.prototype.readPixels;
+			let origToDataURL		= HTMLCanvasElement.prototype.toDataURL;
+			let origToBlob			= HTMLCanvasElement.prototype.toBlob;
+			let getImageData = function getImageData() {
+				let imageData = origGetImageData.apply(this, arguments);
+				for (let i = 0; i < imageData.data.length; i++) {
+					imageData.data[i] += Math.round((Math.random() - 0.5) * 4.9);
+				}
+				return imageData;
+			};
+			CanvasRenderingContext2D.prototype.getImageData = getImageData;
+			CanvasRenderingContext2D.prototype.getImageData.toString = origGetImageData.toString.bind(origGetImageData);
+			let origIsPointInPath = CanvasRenderingContext2D.prototype.isPointInPath;
+			CanvasRenderingContext2D.prototype.isPointInPath = function isPointInPath() {
+				return false;
+			};
+			CanvasRenderingContext2D.prototype.isPointInPath.toString = origIsPointInPath.toString.bind(origIsPointInPath);
+			let readPixels1 = function readPixels() {
+				origReadPixels1.apply(this, arguments);
+				let pixels = arguments[6];
+				for (let i = 0; i < pixels.length; i++) {
+					pixels[i] += Math.round((Math.random() - 0.5) * 4.9);
+				}
+			};
+			WebGLRenderingContext.prototype.readPixels = readPixels1;
+			WebGLRenderingContext.prototype.readPixels.toString = origReadPixels1.toString.bind(origReadPixels1);
+			let readPixels2 = function readPixels() {
+				origReadPixels2.apply(this, arguments);
+				let pixels = arguments[6];
+				for (let i = 0; i < pixels.length; i++) {
+					pixels[i] += Math.round((Math.random() - 0.5) * 4.9);
+				}
+			};
+			WebGL2RenderingContext.prototype.readPixels = readPixels2;
+			WebGL2RenderingContext.prototype.readPixels.toString = origReadPixels2.toString.bind(origReadPixels2);
+			let toDataURL = function toDataURL() {
+				let context = origGetContext.apply(this, [""2d""]);
+				let imageData = origGetImageData.apply(context, [0, 0, this.height, this.width]), origImageData = origGetImageData.apply(context, [0, 0, this.height, this.width]), ret;
+				for (let i = 0; i < imageData.data.length; i++) {
+					imageData.data[i] += Math.round((Math.random() - 0.5) * 4.9);
+				}
+				context.putImageData(imageData, 0, 0);
+				ret = origToDataURL.apply(this, arguments);
+				context.putImageData(origImageData, 0, 0);
+				return ret;
+			};
+			let hookWebGLGetParameter = function (target) {
+				let random = {
+					""item"": function (e) {
+						let rand = e.length * Math.random();
+						return e[Math.floor(rand)];
+					},
+					""number"": function (power) {
+						let tmp = [];
+						for (let i = 0; i < power.length; i++) {
+							tmp.push(Math.pow(2, power[i]));
+						}
+						return random.item(tmp);
+					},
+					""int"": function (power) {
+						let tmp = [];
+						for (let i = 0; i < power.length; i++) {
+							let n = Math.pow(2, power[i]);
+							tmp.push(new Int32Array([n, n]));
+						}
+						return random.item(tmp);
+					},
+					""float"": function (power) {
+						let tmp = [];
+						for (let i = 0; i < power.length; i++) {
+							let n = Math.pow(2, power[i]);
+							tmp.push(new Float32Array([1, n]));
+						}
+						return random.item(tmp);
+					}
+				};
+				let origGetParameter = target.getParameter;
+				target.getParameter = function (a1) {
+					if (a1 === this.STENCIL_BITS							) { return 0;																						}
+					if (a1 === this.DEPTH_BITS								) { return 24;																						}
+					if (a1 === this.MAX_VARYING_VECTORS						) { return 30;																						}
+					if (a1 === this.VENDOR									) { return ""WebKit"";																				}
+					if (a1 === 37445										) { return ""Google Inc."";																			}
+					if (a1 === this.RENDERER								) { return ""WebKit WebGL"";																			}
+					if (a1 === this.MAX_TEXTURE_SIZE						) { return random.number([14, 15]);																	}
+					if (a1 === this.MAX_VERTEX_UNIFORM_VECTORS				) { return random.number([12, 13]);																	}
+					if (a1 === this.MAX_CUBE_MAP_TEXTURE_SIZE				) { return random.number([14, 15]);																	}
+					if (a1 === this.MAX_RENDERBUFFER_SIZE					) { return random.number([14, 15]);																	}
+					if (a1 === this.MAX_VIEWPORT_DIMS						) { return random.int([13, 14, 15]);																}
+					if (a1 === this.ALPHA_BITS								) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.BLUE_BITS								) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.GREEN_BITS								) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.RED_BITS								) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === 34047										) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.MAX_TEXTURE_IMAGE_UNITS					) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.MAX_VERTEX_ATTRIBS						) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.MAX_VERTEX_TEXTURE_IMAGE_UNITS			) { return random.number([1, 2, 3, 4]);																}
+					if (a1 === this.MAX_COMBINED_TEXTURE_IMAGE_UNITS		) { return random.number([4, 5, 6, 7, 8]);															}
+					if (a1 === this.MAX_FRAGMENT_UNIFORM_VECTORS			) { return random.number([10, 11, 12, 13]);															}
+					if (a1 === this.ALIASED_LINE_WIDTH_RANGE				) { return random.float([0, 10, 11, 12, 13]);														}
+					if (a1 === this.ALIASED_POINT_SIZE_RANGE				) { return random.float([0, 10, 11, 12, 13]);														}
+					if (a1 === 37446										) { return random.item([
+					""ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11-26.20.100.7263)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 615 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8681)"",
+""ANGLE (NVIDIA GeForce GTX 1050 Ti Direct3D9Ex vs_3_0 ps_3_0)"",
+""ANGLE (Intel(R) HD Graphics Direct3D11 vs_4_1 ps_4_1)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 730 Direct3D11 vs_5_0 ps_5_0, D3D11-23.21.13.8813)"",
+""ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9219)"",
+""ANGLE (AMD, Radeon RX550/550 Series Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.14535.1000)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9316)"",
+""ANGLE (Intel, Intel(R) HD Graphics Direct3D9Ex vs_3_0 ps_3_0, igdumd64.dll-8.15.10.3268)"",
+""ANGLE (Intel, Intel(R) HD Graphics 5500 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.15.4248)"",
+""ANGLE (NVIDIA GeForce 210  Direct3D11 vs_4_0 ps_4_0)"",
+""ANGLE (AMD, Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1100)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.5678)"",
+""ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9563)"",
+""ANGLE (AMD, Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.13035.1000)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Super Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.4614)"",
+""ANGLE (AMD, Radeon (TM) RX 470 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-26.20.13031.18002)"",
+""ANGLE (Intel(R) Iris(TM) Pro Graphics 5200 Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2070 SUPER Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.5643)"",
+""ANGLE (AMD, Radeon RX 580 Series Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.14534.2)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2070 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6611)"",
+""ANGLE (Intel, Intel(R) HD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.15.4248)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.4575)"",
+""ANGLE (Intel, Intel(R) HD Graphics 3000 Direct3D11 vs_4_1 ps_4_1, D3D11-21.21.13.7654)"",
+""ANGLE (AMD Radeon(TM) R5 Graphics Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (NVIDIA GeForce GTX 1060 5GB Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (AMD, Radeon RX550/550 Series Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21003.1028)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11-25.20.100.6618)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 600 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8681)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4000 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.10.4491)'"",
+""ANGLE (Intel, Intel(R) HD Graphics 4400 Direct3D11 vs_5_0 ps_5_0, D3D11-20.19.15.4835)"",
+""ANGLE (AMD, AMD Radeon(TM) RX Vega 10 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.1028.1)"",
+""ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.1028.1)"",
+""ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8984)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 630 Direct3D9Ex vs_3_0 ps_3_0, nvd3dumx.dll-23.21.13.9135)"",
+""ANGLE (AMD Radeon HD 6530D Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (Intel(R) HD Graphics 620 Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (Intel, Intel(R) HD Graphics 610 Direct3D11 vs_5_0 ps_5_0, D3D11-21.20.16.4508)"",
+""ANGLE (AMD, AMD Radeon HD 5800 Series Direct3D11 vs_5_0 ps_5_0, D3D11-8.17.10.1433)"",
+""ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.11044.7)"",
+""ANGLE (AMD, ATI Radeon HD 4200 Direct3D9Ex vs_3_0 ps_3_0, atiumd64.dll-8.14.10.678)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 610 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9466)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.3200)"",
+""ANGLE (Intel, Intel(R) HD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11-21.20.16.4550)"",
+""ANGLE (NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 430 Direct3D11 vs_5_0 ps_5_0, D3D11-23.21.13.8813)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6611)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6611)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6230)"",
+""ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9168)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4000 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.10.4252)"",
+""ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.11044.4003)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 230M     Direct3D11 vs_4_1 ps_4_1, D3D11-21.21.13.4201)"",
+""ANGLE (Intel, Intel(R) HD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11-23.20.16.4973)"",
+""ANGLE (Intel, Intel(R) HD Graphics 3000 Direct3D11 vs_4_1 ps_4_1, D3D11-23.21.13.8934)"",
+""ANGLE (Intel(R) HD Graphics Family Direct3D11 vs_5_0 ps_5_0)"",
+""ANGLE (AMD, AMD Radeon(TM) Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-26.20.14044.3001)"",
+""ANGLE (NVIDIA GeForce GTX 1070 Direct3D9Ex vs_3_0 ps_3_0)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4600 Direct3D11 vs_5_0 ps_5_0, D3D11-20.19.15.5166)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6627)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4000 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.10.3643)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4600 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.14.5057)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 750 Direct3D11 vs_5_0 ps_5_0, D3D11-10.18.13.5330)"",
+""ANGLE (Intel, Intel(R) HD Graphics 4000 Direct3D9Ex vs_3_0 ps_3_0, igdumd64.dll-9.17.10.2849)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2070 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)"",
+""ANGLE (AMD, Radeon RX 6800 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.22025.1003)"",
+""ANGLE (Intel, Intel(R) Iris(R) Plus Graphics 640 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9189)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 970 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.3200)"",
+""ANGLE (AMD, Radeon RX 5700 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.20045.1100)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 750 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9466)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6100)"",
+""ANGLE (AMD, Radeon RX 5600 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1000)"",
+""ANGLE (Intel, Intel(R) Iris(R) Pro Graphics 580 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8682)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.4614)"",
+""ANGLE (AMD, Radeon RX Vega 56 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.14535.1002)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 600 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9319)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)"",
+""ANGLE (AMD, Radeon RX 480 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.13035.1001)"",
+""ANGLE (Intel, Intel(R) Iris(R) Graphics 6100 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8681)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.3200)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9466)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 3090 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6100)"",
+""ANGLE (AMD, Radeon RX Vega 64 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.14535.1003)"",
+""ANGLE (Intel, Intel(R) Iris(R) Xe Max Graphics Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9563)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Ti Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)"",
+""ANGLE (AMD, Radeon RX 5500 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1100)"",
+""ANGLE (Intel, Intel(R) HD Graphics 530 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8682)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.4614)"",
+""ANGLE (AMD, Radeon RX 6600 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.22025.1003)"",
+""ANGLE (Intel, Intel(R) Iris(R) Graphics 550 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9189)"",
+""ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 Ti Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6100)"",
+""ANGLE (AMD, Radeon RX 6900 XT Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1000)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 617 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9319)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1070 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.3200)"",
+""ANGLE (AMD, Radeon RX 560 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.13035.1001)"",
+""ANGLE (Intel, Intel(R) Iris(R) Plus Graphics 655 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8681)"",
+""ANGLE (Intel, Intel(R) HD Graphics 520 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9466)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 950 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)"",
+""ANGLE (AMD, Radeon RX 550 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1100)"",
+""ANGLE (Intel, Intel(R) HD Graphics 610 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.8682)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.4614)"",
+""ANGLE (AMD, Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.13035.1001)"",
+""ANGLE (Intel, Intel(R) Iris(R) Plus Graphics 650 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9189)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 760 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.14.6100)"",
+""ANGLE (AMD, Radeon RX 5600 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.21035.1000)"",
+""ANGLE (Intel, Intel(R) UHD Graphics 605 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9319)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GTX 770 Direct3D11 vs_5_0 ps_5_0, D3D11-26.21.14.3200)"",
+""ANGLE (AMD, Radeon R7 250 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.13035.1001)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 740 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)"",
+""ANGLE (AMD, Radeon R9 290 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.22025.1003)"",
+""ANGLE (Intel, Intel(R) HD Graphics 510 Direct3D11 vs_5_0 ps_5_0, D3D11-27.20.100.9466)"",
+""ANGLE (NVIDIA, NVIDIA GeForce GT 1030 Direct3D11 vs_5_0 ps_5_0, D3D11-27.21.13.4200)""
+					]);						}
+			if (a1 === this.VERSION) { 
+    return random.item([
+        ""WebGL 1.0 (OpenGL Chromium)"",
+        ""WebGL 1.0 (OpenGL ES 2.0 Chromium)"",
+        ""WebGL 1.0 (OpenGL ES 2.0)"",
+        ""WebGL 2.0 (OpenGL ES 3.0)"",
+        ""WebGL 2.0 (OpenGL Chromium)""
+    ]);
+}
+if (a1 === this.SHADING_LANGUAGE_VERSION) { 
+    return random.item([
+        ""WebGL GLSL"",
+        ""WebGL GLSL ES"",
+        ""WebGL GLSL ES 1.00"",
+        ""WebGL GLSL ES 3.00"",
+        ""WebGL GLSL (OpenGL Chromium)""
+    ]);
+}
+					return origGetParameter.apply(this, arguments);
+				};
+				target.getParameter.toString = origGetParameter.toString.bind(origGetParameter);
+			};
+			hookWebGLGetParameter(WebGLRenderingContext.prototype);
+			hookWebGLGetParameter(WebGL2RenderingContext.prototype);
+			HTMLCanvasElement.prototype.toDataURL = toDataURL;
+			HTMLCanvasElement.prototype.toDataURL.toString = origToDataURL.toString.bind(origToDataURL);
+			let toBlob = function toBlob(callback, type, encoderOptions) {
+				let context = origGetContext.apply(this, [""2d""]);
+				let imageData = origGetImageData.apply(context, [0, 0, this.height, this.width]), imageDataOrig = origGetImageData.apply(context, [0, 0, this.height, this.width]);
+				for (let i = 0; i < imageData.data.length; i++) {
+					imageData.data[i] += Math.round((Math.random() - 0.5) * 4.9);
+				}
+				context.putImageData(imageData, 0, 0);
+				return origToBlob.apply(this, [function (blob) {
+					context.putImageData(imageDataOrig, 0, 0);
+					callback(blob);
+				}, type, encoderOptions]);
+			};
+			HTMLCanvasElement.prototype.toBlob = toBlob;
+			HTMLCanvasElement.prototype.toBlob.toString = origToBlob.toString.bind(origToBlob);
+		})();
+	// 	(function () { // Intl
+	// 		window.Intl = undefined;
+	// 	})();
+		(function () { // Fonts
+			let offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, ""offsetWidth"");
+			let origOffsetWidthGetter = offsetWidth.get;
+			offsetWidth.get = function offsetWidth() {
+				let ret = origOffsetWidthGetter.apply(this, arguments);
+				if (ret != 0) {
+					if (Math.random() >= 0.9) {
+						ret += Math.floor((Math.random() >= 0.5 ? -1 : 1) * Math.random() + Math.random());
+					}
+				}
+				return ret;
+			};
+			offsetWidth.get.toString = origOffsetWidthGetter.toString.bind(origOffsetWidthGetter);
+			Object.defineProperty(HTMLElement.prototype, ""offsetWidth"", offsetWidth);
+			let offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, ""offsetHeight"");
+			let origOffsetHeightGetter = offsetHeight.get;
+			offsetHeight.get = function offsetHeight() {
+				let ret = origOffsetWidthGetter.apply(this, arguments);
+				if (ret != 0) {
+					if (Math.random() >= 0.9) {
+						ret += Math.floor((Math.random() >= 0.5 ? -1 : 1) * Math.random() + Math.random());
+					}
+				}
+				return ret;
+			};
+			offsetHeight.get.toString = origOffsetHeightGetter.toString.bind(origOffsetHeightGetter);
+			Object.defineProperty(HTMLElement.prototype, ""offsetHeight"", offsetHeight);
+		})();
+		let debuggerHook = function (n, m) {
+			try {
+				let orig = window[n].prototype[m];
+				let hook = function () {
+					debug();
+					try {
+						return orig.apply(this, arguments);
+					} catch (e) {}
+				};
+				Object.defineProperty(hook, ""name"", { value: orig.name, writable: false, enumerable: false, configurable: true });
+				window[n].prototype[m] = hook;
+				window[n].prototype[m].toString = orig.toString.bind(orig);
+			} catch (e) {}
+		};
+		let debuggerHookAll = function (n) {
+			try {
+				for (let i in window[n].prototype) {
+					try {
+						if (window[n].prototype[i] instanceof Function) {
+							debuggerHook(n, i);
+						}
+					} catch (e) {}
+				}
+			} catch (e) {}
+		};
+		debug(1);
+		try {
+			debuggerHookAll(""AudioContext"");
+			debuggerHookAll(""BaseAudioContext"");
+			debuggerHookAll(""OfflineAudioCompletionEvent"");
+			debuggerHookAll(""OfflineAudioContext"");
+			debuggerHookAll(""AudioBuffer"");
+			debuggerHookAll(""AnalyserNode"");
+			debuggerHookAll(""HTMLCanvasElement"");
+			debuggerHookAll(""CanvasRenderingContext2D"");
+			debuggerHookAll(""WebGLRenderingContext"");
+			debuggerHookAll(""WebGL2RenderingContext"");
+		} catch (e) {}
+	}) + "")()"";
+	document.documentElement.prepend(script);";
+
+            using (StreamWriter sw = new StreamWriter(jsPath))
+            {
+                sw.Write(jsCode);
+            }
+
+        }
+        private void dataGridView2_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == System.Windows.Forms.Keys.Delete)
+            {
+                if (dataGridView2.SelectedCells.Count > 0)
+                {
+                    int rowIndex = dataGridView2.SelectedCells[0].RowIndex;
+                    if (rowIndex != -1) // 检查 rowIndex 是否有效
+                    {
+                        var selectedRow = dataGridView2.Rows[rowIndex];
+                        if (selectedRow.Cells["餅乾路徑"].Value != null) // 检查 Value 是否为 null
+                        {
+                            string cookiePath = selectedRow.Cells["餅乾路徑"].Value.ToString();
+                            bool canDeleteRow = true;
+
+                            if (Directory.Exists(cookiePath))
+                            {
+                                try
+                                {
+                                    Directory.Delete(cookiePath, true);
+                                }
+                                catch (UnauthorizedAccessException)
+                                {
+                                    MessageBox.Show("瀏覽器運行中無法刪除");
+                                    canDeleteRow = false;
+                                }
+                            }
+
+                            if (canDeleteRow)
+                            {
+                                dataGridView2.Rows.Remove(selectedRow);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        public List<string> GenerateAllEmailCombinationsWithDots(string username, int maxDots = 3) //生成全部可行的gmail，然後從中挑一個使用
+        {
+            if (string.IsNullOrEmpty(username))
+            {
+                throw new ArgumentException("Invalid username.");
+            }
+
+            var combinations = new HashSet<string>();
+            GenerateEmailCombinationsWithDots(username, maxDots, 0, 0, new StringBuilder(), combinations);
+            return combinations.ToList();
+        }
+
+        private void GenerateEmailCombinationsWithDots(string username, int maxDots, int dotsUsed, int startIndex, StringBuilder sb, HashSet<string> combinations)
+        {
+            if (startIndex == username.Length)
+            {
+                if (dotsUsed <= maxDots)
+                {
+                    combinations.Add(sb.ToString() + "@gmail.com");
+                }
+                return;
+            }
+
+            // Include the current character without a dot
+            sb.Append(username[startIndex]);
+            GenerateEmailCombinationsWithDots(username, maxDots, dotsUsed, startIndex + 1, sb, combinations);
+
+            // Remove the current character to prepare for the next recursive call
+            sb.Length--;
+
+            // Include the current character with a dot, if possible
+            if (dotsUsed < maxDots && startIndex < username.Length - 1)
+            {
+                sb.Append(username[startIndex] + ".");
+                GenerateEmailCombinationsWithDots(username, maxDots, dotsUsed + 1, startIndex + 1, sb, combinations);
+                sb.Length -= 2; // Remove the current character and the dot for the next recursive call
+            }
+        }
+        private void button6_Click(object sender, EventArgs e)
+        {
+            string username = "zhitaikong";
+
+            // Generate all email combinations with dots
+            var emailCombinations = GenerateAllEmailCombinationsWithDots(username);
+
+            // Shuffle the email combinations twice
+            Random random = new Random();
+            var shuffledEmailCombinations = emailCombinations.OrderBy(x => random.Next()).ToList();
+            shuffledEmailCombinations = shuffledEmailCombinations.OrderBy(x => random.Next()).ToList();
+
+            // Select a random email combination from the shuffled list
+            int randomIndex = random.Next(shuffledEmailCombinations.Count);
+            string selectedEmail = shuffledEmailCombinations[randomIndex];
+
+            // Use the selected email here
+            MessageBox.Show("Selected email: " + selectedEmail);
+        }
+
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            using StreamWriter file = new StreamWriter("useragenttest.txt");
+            while (true)
+            {
+                try
+                {
+                    string uniqueUserAgent = GenerateUniqueUserAgent();
+                    file.WriteLine(uniqueUserAgent);
+                    file.Flush(); // 确保将内容写入文件
+                }
+                catch
+                {
+                    // 生成User-Agent失败，退出循环
+                    break;
+                }
+            }
+        }
+
+
+        private static readonly Random random = new Random();
+        private static readonly HashSet<string> generatedUserAgents = new HashSet<string>();
+
+        public static string GenerateUniqueUserAgent()
+        {
+            string userAgent;
+            do
+            {
+                userAgent = GenerateUserAgent();
+            } while (generatedUserAgents.Contains(userAgent));
+
+            generatedUserAgents.Add(userAgent);
+            return userAgent;
+        }
+
+        private static string GenerateUserAgent()
+        {
+            int ntMajorVersion = 10 + random.Next(4); // Windows NT 11.0 - 13.0
+            double ntMinorVersion = Math.Round(random.NextDouble(), 1);
+            int chromeVersion = 110 + random.Next(3); // Chrome/110 - Chrome/112
+            int buildVersion = random.Next(10);
+            int buildSubVersion1 = random.Next(10);
+            int buildSubVersion2 = random.Next(10);
+
+            return $"Mozilla/5.0 (Windows NT {ntMajorVersion}.{ntMinorVersion}; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chromeVersion}.{buildVersion}.{buildSubVersion1}.{buildSubVersion2} Safari/537.36";
+        }
+
+        private static HashSet<string> GenerateUniquePhoneNumbers(string phoneNumber, int delta)
+        {
+            int originalLastFourDigits = int.Parse(phoneNumber.Substring(6, 4));
+            int minLastFourDigits = Math.Max(0, originalLastFourDigits - delta);
+            int maxLastFourDigits = Math.Min(9999, originalLastFourDigits + delta);
+            string prefix = phoneNumber.Substring(0, 6);
+
+            HashSet<string> generatedPhoneNumbers = new HashSet<string>();
+
+            for (int i = minLastFourDigits; i <= maxLastFourDigits; i++)
+            {
+                if (i == originalLastFourDigits) continue;
+
+                string newPhoneNumber = prefix + i.ToString("D4");
+                if (newPhoneNumber.Length > 10)
+                {
+                    int carry = (i - 9999) / 10000;
+                    int newPrefix = int.Parse(prefix) + carry;
+                    newPhoneNumber = newPrefix.ToString("D6") + (i % 10000).ToString("D4");
+                }
+                generatedPhoneNumbers.Add(newPhoneNumber);
+            }
+
+            return generatedPhoneNumbers;
+        }
+        private void button5_Click(object sender, EventArgs e)
+        {
+            string inputFilePath = "中華電信.台灣大哥大.遠傳Taiwan台灣空號門號大全完整版沒刪除行數的.txt";
+            string outputFilePath = "中華電信.台灣大哥大.遠傳Taiwan台灣空號門號大全number生成的號碼完整版300多萬個.txt";
+            int delta = 500;
+
+            var originalPhoneNumbers = File.ReadAllLines(inputFilePath);
+            var generatedPhoneNumbers = new HashSet<string>();
+
+            foreach (string phoneNumber in originalPhoneNumbers)
+            {
+                generatedPhoneNumbers.UnionWith(GenerateUniquePhoneNumbers(phoneNumber, delta));
+            }
+
+            // 將號碼隨機排序
+            var shuffledPhoneNumbers = generatedPhoneNumbers.OrderBy(_ => Guid.NewGuid()).ToList();
+
+            File.WriteAllLines(outputFilePath, shuffledPhoneNumbers);
+        }
+
+        private void timer1_Tick(object sender, EventArgs e)
+        {
+            執行緒定時循環檢測();
+        }
+    }
+}
